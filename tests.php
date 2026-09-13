@@ -7,7 +7,9 @@
 declare(strict_types=1);
 if (PHP_SAPI !== 'cli') { http_response_code(403); exit("Ligne de commande uniquement.\n"); }
 
-const SEL_SITE = 'sel-de-test-suffisamment-long-pour-les-controles-0123456789';
+// Sel tiré au hasard à chaque exécution : rien ici ne dépend d'une valeur stable d'un
+// lancement à l'autre, et aucun secret en dur ne traîne dans un dépôt public.
+define('SEL_SITE', bin2hex(random_bytes(32)));
 const EMAIL_EXPEDITEUR = 'essai@example.invalid';
 const EMAIL_EXPEDITEUR_NOM = 'Essai';
 const MARQUE_NOM = 'Essai Socle';

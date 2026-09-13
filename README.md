@@ -5,6 +5,30 @@ Briques PHP réutilisables d'un projet à l'autre.
 **PHP 8.2+, sans framework.** Ce dépôt ne contient que ce qui encode une façon de
 travailler et qu'aucun paquet existant ne fait à notre place.
 
+## ⚠ Dépôt public : ce qui n'y entre jamais
+
+Ce qui est publié ici l'est **définitivement** — un contenu retiré survit dans les clones,
+les forks et les caches. N'y mettez donc jamais :
+
+- un secret, une clé, un jeton, un mot de passe, un sel de site, même « de test » ;
+- un identifiant d'hébergement, un login SSH, un nom de serveur, un chemin personnel ;
+- une adresse électronique réelle (les exemples prennent `@example.invalid`) ;
+- une donnée d'un projet client : nom de client, contenu, capture, jeu de données.
+
+Le socle ne lit aucun secret lui-même : il reçoit `SEL_SITE` et les autres valeurs de
+l'application hôte, et ne s'en sert que dans des `hash_hmac`. Rien n'est jamais imprimé
+ni journalisé.
+
+**Un crochet de pré-commit refuse ce qui ressemble à une fuite.** À installer après chaque
+clone — git ne le fait pas tout seul :
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Une ligne relue et légitime peut porter le marqueur `socle:vu` pour être acceptée. Les
+clés privées, les clés SSH et les jetons de service ne sont **jamais** exemptables.
+
 ## Ce qui n'est PAS ici, et pourquoi
 
 Depuis la décision du 13 septembre 2026 — *« si un bon code existe, autant l'utiliser »* —
@@ -50,25 +74,23 @@ Le socle s'adapte au projet plutôt que l'inverse :
 | Constantes `MARQUE_NOM`, `MARQUE_BLEU`, `CONTACT_COURRIEL` | Habillage des courriels |
 | `porte_demo(['entete_html' => …, 'css' => …, 'titre' => …])` | Logo et feuille de style du projet sur l'écran d'accès |
 
-### Consommation par Composer et clés de déploiement
+### Pourquoi ce dépôt est public
 
-Un serveur ne peut associer qu'**une** clé de déploiement par dépôt GitHub. Pour qu'une
-machine lise à la fois son projet et ce socle, il faut donc deux clés et deux alias dans
-son `~/.ssh/config` — d'où l'URL en `git@github-socle:` dans les `composer.json` qui en
-dépendent. Toute machine qui installe doit avoir cet alias.
+Un projet qui dépend d'un dépôt privé n'est pas transmissible : `composer install` échoue
+chez qui n'y a pas accès. Le socle ne contient ni secret ni logique métier — le rendre
+public est ce qui garde transférables les projets qui s'en servent.
 
 ## Utilisation
 
 Trois façons, par ordre de préférence :
 
-1. **Composer**, si le dépôt est accessible à la machine qui installe :
+1. **Composer**. Le dépôt étant public, aucune clé n'est nécessaire :
    ```json
-   { "repositories": [{ "type": "vcs", "url": "git@github.com:bparent75/socle-php.git" }],
+   { "repositories": [{ "type": "vcs", "url": "https://github.com/bparent75/socle-php.git" }],
      "require": { "bparent75/socle-php": "^1.0" } }
    ```
-   Sur mutualisé OVH, cela suppose une clé de déploiement dédiée à ce dépôt.
 
-2. **Sous-module git** : `git submodule add git@github.com:bparent75/socle-php.git socle`
+2. **Sous-module git** : `git submodule add https://github.com/bparent75/socle-php.git socle`
 
 3. **Copie**, en notant la version reprise dans le `CLAUDE.md` du projet. Le plus simple,
    et acceptable tant que le socle bouge peu — mais il faut alors répercuter les
@@ -80,12 +102,12 @@ Trois façons, par ordre de préférence :
 php tests.php
 ```
 
-45 contrôles sur une base SQLite en mémoire : formats, signatures, limitation des
+53 contrôles sur une base SQLite en mémoire : formats, signatures, limitation des
 tentatives, unicité et annulation dans la file, garde-fou d'envoi en session SSH,
-échappement du gabarit, bornage du journal, porte de démonstration.
+échappement du gabarit, bornage du journal, porte de démonstration, QR code.
 Aucun fichier touché sur disque, aucun courriel envoyé.
 
 ## Provenance
 
-Extrait d'un projet client, où chaque brique tourne en production et est couverte par
-des tests. Voir l'historique de ce dépôt pour les corrections apportées depuis.
+Extrait d'un site d'orientation scolaire, où chaque brique tourne en production et est
+couverte par des tests. Voir l'historique de ce dépôt pour les corrections apportées depuis.

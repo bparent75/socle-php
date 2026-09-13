@@ -1,3 +1,31 @@
+# Ce dépôt est PUBLIC. Tout ce qui pourrait porter un secret est exclu par défaut.
 vendor/
+composer.lock
 .DS_Store
 *.log
+
+# Secrets et configuration locale
+secrets.php
+secret.php
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+id_ecdsa
+.htpasswd
+
+# Données : une base de test peut contenir de vraies adresses
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.sqlite3
+*.db
+*.dump
+
+# Consignes et notes de travail locales
+CLAUDE.md
+.claude/

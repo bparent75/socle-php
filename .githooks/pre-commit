@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+#
+# socle-php — garde-fou avant commit.
+#
+# CE DÉPÔT EST PUBLIC. Ce qui y entre est visible de tous, définitivement : même
+# supprimé ensuite, le contenu survit dans les clones, les forks et les caches.
+# Ce crochet inspecte ce qui est indexé et refuse le commit en cas de doute.
+#
+# Installation (une fois par clone) :   git config core.hooksPath .githooks
+# Contourner une fausse alerte :        git commit --no-verify
+#
+set -uo pipefail
+
+# Le crochet lui-même contient les motifs qu'il traque : il ne s'inspecte pas.
+fichiers=$(git diff --cached --name-only --diff-filter=ACMR | grep -v '^\.githooks/pre-commit$' || true)
+[ -z "$fichiers" ] && exit 0
+
+alertes=""
+signaler() { alertes="${alertes}  • $1\n"; }
+
+# --- 1. Fichiers qui ne doivent jamais être suivis ---------------------------
+interdits=$(echo "$fichiers" | grep -iE '(^|/)(secrets?\.php|\.env(\..*)?|.*\.(sqlite|sqlite3|db|pem|key|p12|pfx|keystore)|id_(rsa|ed25519|ecdsa)|\.htpasswd)$' || true)
+[ -n "$interdits" ] && signaler "fichier interdit : $(echo "$interdits" | tr '\n' ' ')"
+
+# --- 2. Contenu indexé -------------------------------------------------------
+contenu=$(git diff --cached -U0 --no-color -- $(echo "$fichiers" | tr '\n' ' ') | grep '^+' | grep -v '^+++' || true)
+
+# Le marqueur « socle:vu » exempte une ligne relue — mieux vaut une exception nommée,
+# ligne à ligne, qu'un --no-verify qui désactive tout le contrôle. Il ne vaut QUE pour
+# les motifs discutables : une clé ou un jeton n'est jamais exemptable, quoi qu'on écrive.
+relu=$(echo "$contenu" | grep -v 'socle:vu' || true)
+
+verifier() {   # motif, libellé, [texte à inspecter, par défaut les lignes non exemptées]
+    cible="${3:-$relu}"
+    trouve=$(echo "$cible" | grep -nEi "$1" | head -3 || true)
+    [ -n "$trouve" ] && signaler "$2 : $(echo "$trouve" | head -1 | cut -c1-100)"
+}
+
+# Inexcusables : inspectés sur tout le contenu indexé, marqueur compris.
+verifier '\-\-\-\-\-BEGIN [A-Z ]*PRIVATE KEY'                       "clé privée" "$contenu"
+verifier 'ssh-(rsa|ed25519|dss) AAAA'                               "clé publique SSH" "$contenu"
+verifier '(AKIA[0-9A-Z]{16}|sk_live_|pk_live_|xox[baprs]-|ghp_[A-Za-z0-9]{36}|github_pat_)' "jeton de service" "$contenu"
+
+# Discutables : une ligne marquée « socle:vu » y échappe.
+verifier '(mot_?de_?passe|password|passwd|secret|api_?key|token|sel_site|access_key)[A-Za-z0-9_]*[[:space:]]*[=:][[:space:]]*.?['"'"'"][^'"'"'"]{8,}' "affectation d'un secret en clair"
+verifier '(cluster[0-9]{2,3}\.hosting|homez\.[0-9]+|ssh\.cluster)'  "hébergement nominatif"
+verifier '/(Users|home)/[a-z]'                                      "chemin personnel absolu"
+
+# Adresses électroniques réelles. Les domaines de test et les URL git sont tolérés.
+courriels=$(echo "$relu" \
+  | grep -oE '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}' \
+  | grep -viE '@example\.(invalid|com|org|net)$|@(test|localhost|invalid)$|users\.noreply\.github\.com$|^git@github\.com$' \
+  | sort -u || true)
+[ -n "$courriels" ] && signaler "adresse électronique réelle : $(echo "$courriels" | tr '\n' ' ')"
+
+if [ -n "$alertes" ]; then
+    echo ""
+    echo "  ⛔ Commit refusé — ce dépôt est PUBLIC."
+    echo ""
+    printf "%b" "$alertes"
+    echo ""
+    echo "  Retirez ce contenu, ou, s'il s'agit d'une fausse alerte : git commit --no-verify"
+    echo ""
+    exit 1
+fi
+exit 0
