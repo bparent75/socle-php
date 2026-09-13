@@ -30,6 +30,12 @@ function site_indexable(): bool
     return !defined('SITE_OUVERT') || (bool)constant('SITE_OUVERT');
 }
 
+/**
+ * Ferme le site derrière un mot de passe unique, et interdit l'indexation.
+ *
+ * Options : titre, texte, css (feuille de style à charger), entete_html (logo),
+ * couleur (accentuation du bouton), ouverts (chemins servis sans mot de passe).
+ */
 function porte_demo(array $options = []): void
 {
     if (!demonstration_verrouillee()) return;
@@ -78,6 +84,10 @@ function porte_demo(array $options = []): void
     // HTML libre inséré en tête de la carte : un logo, typiquement. Fourni par le
     // projet, donc jamais une donnée utilisateur.
     $entete = $options['entete_html'] ?? '';
+    // Couleur du bouton : un projet qui a une couleur d'accentuation la passe ici,
+    // plutôt que de recopier tout le gabarit pour un seul détail.
+    $accent = $options['couleur'] ?? (defined('MARQUE_BLEU') ? (string)MARQUE_BLEU : '#054570');
+    if (!preg_match('/^#[0-9A-Fa-f]{3,8}$/', $accent)) $accent = '#054570';
     ?><!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -88,7 +98,7 @@ function porte_demo(array $options = []): void
 padding:1.5rem;background:#EDF1F5;color:#16222E}main{max-width:26rem;width:100%;background:#fff;
 border:1px solid #C8D5DF;border-radius:12px;padding:1.5rem}input{width:100%;min-height:44px;padding:.55rem .7rem;
 font:inherit;border:1.5px solid #C8D5DF;border-radius:8px;box-sizing:border-box}
-button{min-height:44px;padding:.6rem 1.15rem;border:0;border-radius:999px;background:#054570;color:#fff;
+button{min-height:44px;padding:.6rem 1.15rem;border:0;border-radius:999px;background:<?= $accent ?>;color:#fff;
 font:inherit;font-weight:600;cursor:pointer}.err{background:#F8E0DE;border:1px solid #E3B0AC;color:#A3301B;
 padding:.8rem;border-radius:8px;margin-bottom:1rem}</style>
 </head><body><main>
