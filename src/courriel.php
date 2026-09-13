@@ -28,8 +28,19 @@ declare(strict_types=1);
 const SOCLE_MAX_TENTATIVES = 5;
 const SOCLE_LOT_ENVOI = 50;
 
+/**
+ * Valeur de configuration, dans l'ordre : la fonction param() du projet si elle existe,
+ * puis la constante, puis le défaut.
+ *
+ * Le détour par param() permet à un projet de rendre ces valeurs modifiables par son
+ * équipe — une adresse de contact, un nom de marque — sans figer une constante.
+ */
 function socle_param(string $constante, string $defaut = ''): string
 {
+    if (function_exists('param')) {
+        $v = param(strtolower($constante), '');
+        if ($v !== '') return $v;
+    }
     return defined($constante) ? (string)constant($constante) : $defaut;
 }
 

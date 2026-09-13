@@ -34,6 +34,24 @@ N'ajoutez ici que ce qui n'a pas d'équivalent, et dites pourquoi dans l'en-têt
 Chaque fichier indique en tête ce qu'il attend de l'application hôte (fonction `bd()`,
 constante `SEL_SITE`, etc.). Aucun n'impose de structure de projet.
 
+### Points d'extension
+
+Le socle s'adapte au projet plutôt que l'inverse :
+
+| Attente | Effet |
+|---|---|
+| Fonction `param(string $cle, string $defaut)` | Consultée avant les constantes : permet de rendre une valeur modifiable par l'équipe (adresse de contact, nom de marque) au lieu de la figer |
+| Constante `NOM_SESSION` | Nom du cookie de session, sans avoir à le passer à chaque appel |
+| Constantes `MARQUE_NOM`, `MARQUE_BLEU`, `CONTACT_COURRIEL` | Habillage des courriels |
+| `porte_demo(['entete_html' => …, 'css' => …, 'titre' => …])` | Logo et feuille de style du projet sur l'écran d'accès |
+
+### Consommation par Composer et clés de déploiement
+
+Un serveur ne peut associer qu'**une** clé de déploiement par dépôt GitHub. Pour qu'une
+machine lise à la fois son projet et ce socle, il faut donc deux clés et deux alias dans
+son `~/.ssh/config` — d'où l'URL en `git@github-socle:` dans les `composer.json` qui en
+dépendent. Toute machine qui installe doit avoir cet alias.
+
 ## Utilisation
 
 Trois façons, par ordre de préférence :

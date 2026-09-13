@@ -34,10 +34,16 @@ function requete_https(): bool
  * Ouvre la session. Sans effet en ligne de commande, et sans effet si des en-têtes
  * ont déjà été envoyés : tenter malgré tout ne produirait que des avertissements.
  */
-function demarrer_session(string $nom = 'socle_session'): void
+/**
+ * $nom est facultatif : à défaut, la constante NOM_SESSION du projet est utilisée.
+ * Cela évite d'avoir à passer le nom à chaque appel, et donc de l'oublier quelque part —
+ * une session ouverte sous deux noms différents déconnecte l'utilisateur au hasard.
+ */
+function demarrer_session(?string $nom = null): void
 {
     if (PHP_SAPI === 'cli' || headers_sent()) return;
     if (session_status() === PHP_SESSION_ACTIVE) return;
+    $nom ??= defined('NOM_SESSION') ? (string)NOM_SESSION : 'socle_session';
     session_set_cookie_params([
         'lifetime' => 0,
         'path'     => '/',

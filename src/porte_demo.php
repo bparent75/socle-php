@@ -72,9 +72,12 @@ function porte_demo(array $options = []): void
     header('X-Content-Type-Options: nosniff');
     header('X-Frame-Options: DENY');
 
-    $titre = $options['titre'] ?? 'Site de démonstration';
-    $texte = $options['texte'] ?? 'Ce site est en cours de construction. Il n’est pas ouvert au public.';
-    $css   = $options['css'] ?? '';
+    $titre  = $options['titre'] ?? 'Site de démonstration';
+    $texte  = $options['texte'] ?? 'Ce site est en cours de construction. Il n’est pas ouvert au public.';
+    $css    = $options['css'] ?? '';
+    // HTML libre inséré en tête de la carte : un logo, typiquement. Fourni par le
+    // projet, donc jamais une donnée utilisateur.
+    $entete = $options['entete_html'] ?? '';
     ?><!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -89,6 +92,7 @@ button{min-height:44px;padding:.6rem 1.15rem;border:0;border-radius:999px;backgr
 font:inherit;font-weight:600;cursor:pointer}.err{background:#F8E0DE;border:1px solid #E3B0AC;color:#A3301B;
 padding:.8rem;border-radius:8px;margin-bottom:1rem}</style>
 </head><body><main>
+  <?= $entete ?>
   <h1 style="font-size:1.4rem;margin-top:0"><?= h($titre) ?></h1>
   <p style="color:#4C5C6A"><?= h($texte) ?></p>
   <?php if ($erreur !== ''): ?><div class="err" role="alert"><?= h($erreur) ?></div><?php endif; ?>
