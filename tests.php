@@ -21,19 +21,19 @@ $pdo = new PDO('sqlite::memory:', null, null, [
 $pdo->exec(file_get_contents(__DIR__ . '/sql/sqlite.sql'));
 function bd(): PDO { global $pdo; return $pdo; }
 
-require __DIR__ . '/src/formats.php';
-require __DIR__ . '/src/securite.php';
-require __DIR__ . '/src/courriel.php';
-require __DIR__ . '/src/journal.php';
-require __DIR__ . '/src/porte_demo.php';
-
-// qrcode.php a besoin de bacon/bacon-qr-code. L'autochargeur est soit celui du socle
-// installé seul, soit celui du projet qui l'héberge dans son vendor/.
-$autoload = null;
-foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as $c) {
-    if (is_file($c)) { $autoload = $c; break; }
+// Les fonctions du socle arrivent par deux chemins possibles, et les charger tous les
+// deux les redéclarerait : soit l'autochargeur Composer (dépôt installé seul, ou hébergé
+// dans le vendor/ d'un projet), soit les sources directement (dépôt cloné, sans Composer).
+foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as $candidat) {
+    if (is_file($candidat)) { require $candidat; break; }
 }
-if ($autoload) { require $autoload; require __DIR__ . '/src/qrcode.php'; }
+if (!function_exists('h')) {
+    foreach (['formats', 'securite', 'courriel', 'journal', 'porte_demo'] as $brique) {
+        require __DIR__ . "/src/$brique.php";
+    }
+    // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
+    if (class_exists(\BaconQrCode\Encoder\Encoder::class)) require __DIR__ . '/src/qrcode.php';
+}
 
 $reussis = 0; $echecs = [];
 function verifie(string $nom, bool $ok, string $detail = ''): void {
