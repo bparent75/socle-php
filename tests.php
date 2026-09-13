@@ -27,6 +27,14 @@ require __DIR__ . '/src/courriel.php';
 require __DIR__ . '/src/journal.php';
 require __DIR__ . '/src/porte_demo.php';
 
+// qrcode.php a besoin de bacon/bacon-qr-code. L'autochargeur est soit celui du socle
+// installé seul, soit celui du projet qui l'héberge dans son vendor/.
+$autoload = null;
+foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as $c) {
+    if (is_file($c)) { $autoload = $c; break; }
+}
+if ($autoload) { require $autoload; require __DIR__ . '/src/qrcode.php'; }
+
 $reussis = 0; $echecs = [];
 function verifie(string $nom, bool $ok, string $detail = ''): void {
     global $reussis, $echecs;
@@ -110,6 +118,27 @@ verifie('site indexable par défaut', site_indexable());
 define('MOT_DE_PASSE_DEMO', 'secret');
 verifie('verrouillée avec la constante', demonstration_verrouillee());
 verifie('site non indexable quand verrouillé', !site_indexable());
+
+titre('QR code');
+if (!function_exists('qr_svg')) {
+    echo "  (ignoré : bacon/bacon-qr-code n'est pas installé — lancer composer install)\n";
+} else {
+    $uri = 'otpauth://totp/Exemple:qui@example.invalid?secret=JBSWY3DPEHPK3PXP&issuer=Exemple';
+    $svg = qr_svg($uri, 200, 'Code d’activation');
+    verifie('un SVG est produit', str_starts_with($svg, '<svg') && str_ends_with($svg, '</svg>'));
+    verifie('taille demandée respectée', str_contains($svg, 'width="200" height="200"'));
+    verifie('accessible aux lecteurs d’écran',
+            str_contains($svg, 'role="img"') && str_contains($svg, 'aria-label="Code d’activation"'));
+    verifie('le libellé est échappé', str_contains(qr_svg('x', 100, '<i>'), 'aria-label="&lt;i&gt;"'));
+    verifie('des modules sont tracés', substr_count($svg, 'h1v1h-1z') > 100);
+    // Marge de 4 modules de chaque côté : une version 2 (25 modules) donne 33.
+    verifie('marge de 4 modules', (bool)preg_match('/viewBox="0 0 (\d+) \1"/', $svg, $m)
+                                  && ((int)$m[1] - 8) % 4 === 1);
+    verifie('aucune ressource distante', !str_contains($svg, 'http://') && !str_contains($svg, '<image'));
+    // Un contenu différent doit donner un code différent : garde-fou contre un cache
+    // ou un paramètre ignoré.
+    verifie('le contenu est bien encodé', qr_svg('un') !== qr_svg('deux'));
+}
 
 echo "\n" . str_repeat('-', 56) . "\n";
 $total = $reussis + count($echecs);

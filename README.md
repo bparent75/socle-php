@@ -12,13 +12,17 @@ les briques standard passent par Composer :
 
 | Besoin | Paquet à utiliser |
 |---|---|
-| QR code | `bacon/bacon-qr-code` |
+| QR code | `bacon/bacon-qr-code` — enveloppé par `src/qrcode.php`, voir ci-dessous |
 | PDF | `dompdf/dompdf` ou `mpdf/mpdf` |
 | Envoi de courriel | `phpmailer/phpmailer` |
 | Second facteur TOTP | `spomky-labs/otphp` |
 | Tableur | `phpoffice/phpspreadsheet` |
 
 N'ajoutez ici que ce qui n'a pas d'équivalent, et dites pourquoi dans l'en-tête du fichier.
+
+**Une enveloppe de dix lignes autour d'un paquet reste légitime** quand elle évite de
+réécrire le même raccordement dans chaque projet : c'est le cas de `src/qrcode.php`, qui
+laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu SVG accessible.
 
 ## Contenu
 
@@ -28,6 +32,7 @@ N'ajoutez ici que ce qui n'a pas d'équivalent, et dites pourquoi dans l'en-têt
 | `src/securite.php` | Session et HTTPS derrière un proxy, jeton CSRF, limitation des tentatives, jetons hachés, liens signés |
 | `src/courriel.php` | File d'envoi avec reprise, gabarit HTML, et le garde-fou des envois refusés en session SSH |
 | `src/journal.php` | Journal d'audit |
+| `src/qrcode.php` | `qr_svg()` : un QR code en SVG en ligne, accessible. L'encodage vient de `bacon/bacon-qr-code` |
 | `src/porte_demo.php` | Rideau par mot de passe sur un site en construction, et interdiction d'indexation |
 | `sql/` | Les tables dont ces briques ont besoin, en SQLite et en MySQL |
 

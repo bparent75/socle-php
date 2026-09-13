@@ -1,11 +1,12 @@
 {
     "name": "bparent75/socle-php",
-    "description": "Briques PHP réutilisables : formats français, sécurité, file de courriels, journal d'audit.",
+    "description": "Briques PHP réutilisables : formats français, sécurité, file de courriels, journal d'audit, QR code.",
     "type": "library",
     "license": "proprietary",
     "require": {
         "php": ">=8.2",
-        "ext-mbstring": "*"
+        "ext-mbstring": "*",
+        "bacon/bacon-qr-code": "^3.0"
     },
     "autoload": {
         "files": [
@@ -13,7 +14,8 @@
             "src/securite.php",
             "src/courriel.php",
             "src/journal.php",
-            "src/porte_demo.php"
+            "src/porte_demo.php",
+            "src/qrcode.php"
         ]
     }
 }
