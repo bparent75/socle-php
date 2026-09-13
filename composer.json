@@ -1,0 +1,19 @@
+{
+    "name": "bparent75/socle-php",
+    "description": "Briques PHP réutilisables : formats français, sécurité, file de courriels, journal d'audit.",
+    "type": "library",
+    "license": "proprietary",
+    "require": {
+        "php": ">=8.2",
+        "ext-mbstring": "*"
+    },
+    "autoload": {
+        "files": [
+            "src/formats.php",
+            "src/securite.php",
+            "src/courriel.php",
+            "src/journal.php",
+            "src/porte_demo.php"
+        ]
+    }
+}
