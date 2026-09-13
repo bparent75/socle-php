@@ -134,7 +134,11 @@ if (!function_exists('qr_svg')) {
     // Marge de 4 modules de chaque côté : une version 2 (25 modules) donne 33.
     verifie('marge de 4 modules', (bool)preg_match('/viewBox="0 0 (\d+) \1"/', $svg, $m)
                                   && ((int)$m[1] - 8) % 4 === 1);
-    verifie('aucune ressource distante', !str_contains($svg, 'http://') && !str_contains($svg, '<image'));
+    // Le secret du second facteur est dans ce SVG : rien ne doit pouvoir sortir du serveur.
+    // xmlns="http://www.w3.org/2000/svg" est un identifiant d'espace de noms, pas une requête.
+    verifie('aucune ressource distante',
+            !str_contains($svg, '<image') && !str_contains($svg, 'xlink:href')
+            && !str_contains($svg, 'url(') && !str_contains($svg, '<script'));
     // Un contenu différent doit donner un code différent : garde-fou contre un cache
     // ou un paramètre ignoré.
     verifie('le contenu est bien encodé', qr_svg('un') !== qr_svg('deux'));
