@@ -97,6 +97,16 @@ verifie('la file n’est pas consommée en session SSH', $r['envoyes'] === 0 && 
 verifie('le message l’explique', str_contains($r['message'], 'SSH'));
 putenv('SSH_CONNECTION');
 
+titre('Réglages SMTP');
+verifie('sans SMTP_HOTE, envoi par mail()', courriel_smtp() === null);
+define('SMTP_HOTE', 'smtp.example.invalid');
+define('SMTP_PORT', 465);
+define('SMTP_UTILISATEUR', 'robot@example.invalid');
+define('SMTP_MOT_DE_PASSE', 'secret');
+$smtp = courriel_smtp();
+verifie('avec SMTP_HOTE, réglages lus', $smtp !== null && $smtp['hote'] === 'smtp.example.invalid' && $smtp['utilisateur'] === 'robot@example.invalid');
+verifie('port 465 = TLS implicite', $smtp !== null && $smtp['chiffrement'] === 'ssl');
+
 titre('Gabarit de courriel');
 $html = courriel_html('Titre du message', "Bonjour,\n\nVoici le lien :\n\nhttps://exemple.invalid/aller\n\nMerci.");
 verifie('le sujet apparaît comme titre', str_contains($html, 'Titre du message'));

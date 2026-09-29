@@ -6,6 +6,8 @@
  *   - bd(): PDO, maintenant(), h()
  *   - constantes EMAIL_EXPEDITEUR, et éventuellement EMAIL_EXPEDITEUR_NOM, MARQUE_NOM,
  *     CONTACT_COURRIEL, MARQUE_BLEU
+ *   - facultatif, les quatre constantes SMTP_* (hôte, port, utilisateur, mot de passe) — voir
+ *     courriel_smtp() — pour envoyer par SMTP (PHPMailer requis) au lieu du mail() de l'hébergement
  *   - la table `notification` (voir sql/)
  *   - phpmailer/phpmailer, sinon repli en texte seul
  *
@@ -18,6 +20,11 @@
  * mail() renvoie quand même « succès ». Traiter la file dans ce contexte marque les
  * messages comme envoyés sans qu'ils partent : ils sont perdus. D'où file_traiter()
  * qui refuse de s'exécuter en session interactive.
+ *
+ * PIÈGE N°3 — le mail() d'un mutualisé part de l'IP de l'hébergeur, sans signature DKIM.
+ * Si le SPF du domaine expéditeur ne cite pas cet hébergeur, Yahoo jette le message sans
+ * même le classer en spam (constaté sur atea.info, 29/09/2026). D'où le mode SMTP : envoyer
+ * par le serveur de courrier du domaine lui-même (Google Workspace, OVH…), qui signe.
  *
  * PIÈGE N°2 — la tâche planifiée d'un mutualisé peut ne tourner qu'une fois par heure.
  * Un lien de connexion valable 30 minutes doit donc partir immédiatement, depuis la
@@ -93,16 +100,55 @@ function annuler_envois(string $objet_type, int $objet_id): void
  *
  * @return array{ok:bool, erreur:string}
  */
+/**
+ * Réglages SMTP du projet, ou null si l'envoi reste confié au mail() de l'hébergement.
+ *
+ * Les quatre constantes viennent de secrets.php ; il suffit que l'hôte soit vide ou absent
+ * pour rester en mail(). Le port décide du chiffrement : 465 = TLS implicite (SMTPS),
+ * tout autre port = STARTTLS.
+ *
+ * @return array{hote:string, port:int, utilisateur:string, mot_de_passe:string, chiffrement:string}|null
+ */
+function courriel_smtp(): ?array
+{
+    $hote = defined('SMTP_HOTE') ? trim((string)constant('SMTP_HOTE')) : '';
+    if ($hote === '') return null;
+    $port = defined('SMTP_PORT') ? (int)constant('SMTP_PORT') : 587;
+    return [
+        'hote'         => $hote,
+        'port'         => $port,
+        'utilisateur'  => defined('SMTP_UTILISATEUR') ? (string)constant('SMTP_UTILISATEUR') : '',
+        'mot_de_passe' => defined('SMTP_MOT_DE_PASSE') ? (string)constant('SMTP_MOT_DE_PASSE') : '',
+        'chiffrement'  => $port === 465 ? 'ssl' : 'tls',
+    ];
+}
+
 function expedier_courriel(string $destinataire, string $sujet, string $corps): array
 {
     $html = courriel_html($sujet, $corps);
     $nom_expediteur = socle_param('EMAIL_EXPEDITEUR_NOM', 'Notification');
     $contact = socle_param('CONTACT_COURRIEL', EMAIL_EXPEDITEUR);
+    $smtp = courriel_smtp();
+
+    if ($smtp !== null && !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
+        return ['ok' => false, 'erreur' => 'SMTP configuré mais phpmailer/phpmailer absent'];
+    }
 
     if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
         try {
             $mail = new \PHPMailer\PHPMailer\PHPMailer(true);
-            $mail->isMail();
+            if ($smtp !== null) {
+                $mail->isSMTP();
+                $mail->Host       = $smtp['hote'];
+                $mail->Port       = $smtp['port'];
+                $mail->SMTPSecure = $smtp['chiffrement'];
+                $mail->SMTPAuth   = $smtp['utilisateur'] !== '';
+                $mail->Username   = $smtp['utilisateur'];
+                $mail->Password   = $smtp['mot_de_passe'];
+                $mail->Timeout    = 20;
+            } else {
+                $mail->isMail();
+            }
             $mail->CharSet = 'UTF-8';
             $mail->Encoding = 'base64';
             $mail->setFrom(EMAIL_EXPEDITEUR, $nom_expediteur);
