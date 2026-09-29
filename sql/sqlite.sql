@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS notification (
     objet_type      TEXT NOT NULL DEFAULT '',
     objet_id        INTEGER,
     cle_unicite     TEXT UNIQUE,          -- empêche le doublon de rappel
+    expediteur      TEXT,                 -- « De » propre au message, sinon EMAIL_EXPEDITEUR
     cree_le         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_notif_file ON notification(etat, envoyer_apres);

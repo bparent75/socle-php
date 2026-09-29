@@ -97,6 +97,14 @@ verifie('la file n’est pas consommée en session SSH', $r['envoyes'] === 0 && 
 verifie('le message l’explique', str_contains($r['message'], 'SSH'));
 putenv('SSH_CONNECTION');
 
+titre('Expéditeur par message');
+verifie('sans EMAIL_EXPEDITEUR_TECHNIQUE, l’adresse technique est l’expéditeur', expediteur_technique() === EMAIL_EXPEDITEUR);
+filer_courriel('z@example.invalid', 'Lien', 'Corps', null, 'cle-exp', null, 'connexion', 1, false, 'robot@example.invalid');
+verifie('l’expéditeur propre au message est mémorisé en file',
+    $pdo->query("SELECT expediteur FROM notification WHERE cle_unicite = 'cle-exp'")->fetchColumn() === 'robot@example.invalid');
+verifie('sans expéditeur propre, la colonne reste vide',
+    $pdo->query("SELECT expediteur FROM notification WHERE cle_unicite = 'cle-1'")->fetchColumn() === null);
+
 titre('Réglages SMTP');
 verifie('sans SMTP_HOTE, envoi par mail()', courriel_smtp() === null);
 define('SMTP_HOTE', 'smtp.example.invalid');

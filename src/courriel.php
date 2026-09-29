@@ -8,6 +8,9 @@
  *     CONTACT_COURRIEL, MARQUE_BLEU
  *   - facultatif, les quatre constantes SMTP_* (hôte, port, utilisateur, mot de passe) — voir
  *     courriel_smtp() — pour envoyer par SMTP (PHPMailer requis) au lieu du mail() de l'hébergement
+ *   - facultatif, EMAIL_EXPEDITEUR_TECHNIQUE : adresse « ne pas répondre » réservée aux messages
+ *     purement techniques (lien de connexion) ; EMAIL_EXPEDITEUR reste l'adresse humaine, celle
+ *     à laquelle on répond — voir expediteur_technique()
  *   - la table `notification` (voir sql/)
  *   - phpmailer/phpmailer, sinon repli en texte seul
  *
@@ -61,22 +64,22 @@ function socle_param(string $constante, string $defaut = ''): string
 function filer_courriel(string $destinataire, string $sujet, string $corps,
                         ?int $utilisateur_id = null, string $cle_unicite = '',
                         ?string $envoyer_apres = null, string $objet_type = '', ?int $objet_id = null,
-                        bool $urgent = false): bool
+                        bool $urgent = false, ?string $expediteur = null): bool
 {
     try {
         bd()->prepare('INSERT INTO notification (utilisateur_id, destinataire, sujet, corps, envoyer_apres,
-                                                 objet_type, objet_id, cle_unicite, cree_le)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+                                                 objet_type, objet_id, cle_unicite, expediteur, cree_le)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
             ->execute([$utilisateur_id, $destinataire, $sujet, $corps,
                        $envoyer_apres ?? maintenant(), $objet_type, $objet_id,
-                       $cle_unicite !== '' ? $cle_unicite : null, maintenant()]);
+                       $cle_unicite !== '' ? $cle_unicite : null, $expediteur, maintenant()]);
         $id = (int)bd()->lastInsertId();
     } catch (PDOException) {
         return false;   // doublon volontairement ignoré (clé d'unicité)
     }
 
     if ($urgent && PHP_SAPI !== 'cli' && $envoyer_apres === null) {
-        $r = expedier_courriel($destinataire, $sujet, $corps);
+        $r = expedier_courriel($destinataire, $sujet, $corps, $expediteur);
         bd()->prepare('UPDATE notification SET etat = ?, tentatives = 1, envoye_le = ?, derniere_erreur = ?
                        WHERE id = ?')
             ->execute([$r['ok'] ? 'envoye' : 'en_attente', $r['ok'] ? maintenant() : null, $r['erreur'], $id]);
@@ -92,14 +95,6 @@ function annuler_envois(string $objet_type, int $objet_id): void
         ->execute([$objet_type, $objet_id]);
 }
 
-/**
- * Remet un message au serveur de courrier.
- *
- * ATTENTION : « vrai » signifie que le message a été accepté, pas qu'il est arrivé.
- * Ne jamais présenter ce retour comme une preuve de réception.
- *
- * @return array{ok:bool, erreur:string}
- */
 /**
  * Réglages SMTP du projet, ou null si l'envoi reste confié au mail() de l'hébergement.
  *
@@ -123,11 +118,37 @@ function courriel_smtp(): ?array
     ];
 }
 
-function expedier_courriel(string $destinataire, string $sujet, string $corps): array
+/**
+ * Adresse « ne pas répondre », pour les seuls messages techniques (lien de connexion…).
+ *
+ * Tout ce qui s'adresse à un humain et peut appeler une réponse part de EMAIL_EXPEDITEUR :
+ * les gens regardent le champ « De », pas le Reply-To, et « noreply » leur dit de se taire.
+ * Sans EMAIL_EXPEDITEUR_TECHNIQUE, retombe sur EMAIL_EXPEDITEUR.
+ */
+function expediteur_technique(): string
+{
+    $adresse = defined('EMAIL_EXPEDITEUR_TECHNIQUE') ? trim((string)constant('EMAIL_EXPEDITEUR_TECHNIQUE')) : '';
+    return $adresse !== '' ? $adresse : EMAIL_EXPEDITEUR;
+}
+
+/**
+ * Remet un message au serveur de courrier.
+ *
+ * ATTENTION : « vrai » signifie que le message a été accepté, pas qu'il est arrivé.
+ * Ne jamais présenter ce retour comme une preuve de réception.
+ *
+ * $expediteur remplace EMAIL_EXPEDITEUR pour ce message (null = défaut). En SMTP, l'adresse
+ * doit être acceptée par le compte qui s'authentifie (alias ou « envoyer en tant que »),
+ * sans quoi le serveur réécrit le champ « De ».
+ *
+ * @return array{ok:bool, erreur:string}
+ */
+function expedier_courriel(string $destinataire, string $sujet, string $corps, ?string $expediteur = null): array
 {
     $html = courriel_html($sujet, $corps);
     $nom_expediteur = socle_param('EMAIL_EXPEDITEUR_NOM', 'Notification');
     $contact = socle_param('CONTACT_COURRIEL', EMAIL_EXPEDITEUR);
+    $de = trim((string)$expediteur) !== '' ? trim((string)$expediteur) : EMAIL_EXPEDITEUR;
     $smtp = courriel_smtp();
 
     if ($smtp !== null && !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
@@ -151,9 +172,9 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps): 
             }
             $mail->CharSet = 'UTF-8';
             $mail->Encoding = 'base64';
-            $mail->setFrom(EMAIL_EXPEDITEUR, $nom_expediteur);
+            $mail->setFrom($de, $nom_expediteur);
             $mail->addAddress($destinataire);
-            if ($contact !== EMAIL_EXPEDITEUR) $mail->addReplyTo($contact);
+            if ($contact !== $de) $mail->addReplyTo($contact);
             $mail->addCustomHeader('Auto-Submitted', 'auto-generated');
             $mail->Subject = $sujet;
             $mail->isHTML(true);
@@ -166,7 +187,7 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps): 
         }
     }
 
-    $entetes = "From: $nom_expediteur <" . EMAIL_EXPEDITEUR . ">\r\n"
+    $entetes = "From: $nom_expediteur <$de>\r\n"
              . "Reply-To: $contact\r\n"
              . "Content-Type: text/plain; charset=UTF-8\r\nMIME-Version: 1.0\r\n"
              . "Auto-Submitted: auto-generated";
@@ -252,7 +273,7 @@ function file_traiter(bool $forcer = false): array
     $echecs = 0;
 
     foreach ($req->fetchAll() as $n) {
-        $r = expedier_courriel($n['destinataire'], $n['sujet'], $n['corps']);
+        $r = expedier_courriel($n['destinataire'], $n['sujet'], $n['corps'], $n['expediteur'] ?? null);
         if ($r['ok']) {
             $pdo->prepare("UPDATE notification SET etat = 'envoye', envoye_le = ?, tentatives = tentatives + 1
                            WHERE id = ?")->execute([maintenant(), $n['id']]);
