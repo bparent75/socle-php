@@ -11,6 +11,8 @@
  *   - facultatif, EMAIL_EXPEDITEUR_TECHNIQUE : adresse « ne pas répondre » réservée aux messages
  *     purement techniques (lien de connexion) ; EMAIL_EXPEDITEUR reste l'adresse humaine, celle
  *     à laquelle on répond — voir expediteur_technique()
+ *   - facultatif, les colonnes `repondre_a` et `copie` de la table, pour un Reply-To ou un Cc
+ *     propre à un message (socle 1.5)
  *   - la table `notification` (voir sql/)
  *   - phpmailer/phpmailer, sinon repli en texte seul
  *
@@ -60,26 +62,36 @@ function socle_param(string $constante, string $defaut = ''): string
  * $cle_unicite empêche le doublon — un rappel posé deux fois, par exemple.
  * $urgent expédie tout de suite, sans attendre la tâche planifiée ; en cas d'échec le
  * message reste en file et sera repris normalement.
+ *
+ * $repondre_a remplace CONTACT_COURRIEL dans le Reply-To de ce message (la personne qui l'a
+ * rédigé, par exemple) ; $copie ajoute une adresse en Cc. Les deux demandent les colonnes
+ * `repondre_a` et `copie` de la table (voir sql/) ; tant qu'on ne s'en sert pas, elles ne
+ * sont pas écrites, et un projet qui ne les a pas encore créées continue de fonctionner.
  */
 function filer_courriel(string $destinataire, string $sujet, string $corps,
                         ?int $utilisateur_id = null, string $cle_unicite = '',
                         ?string $envoyer_apres = null, string $objet_type = '', ?int $objet_id = null,
-                        bool $urgent = false, ?string $expediteur = null): bool
+                        bool $urgent = false, ?string $expediteur = null,
+                        ?string $repondre_a = null, ?string $copie = null): bool
 {
+    $colonnes = ['utilisateur_id' => $utilisateur_id, 'destinataire' => $destinataire, 'sujet' => $sujet,
+                 'corps' => $corps, 'envoyer_apres' => $envoyer_apres ?? maintenant(),
+                 'objet_type' => $objet_type, 'objet_id' => $objet_id,
+                 'cle_unicite' => $cle_unicite !== '' ? $cle_unicite : null, 'expediteur' => $expediteur];
+    if ($repondre_a !== null) $colonnes['repondre_a'] = $repondre_a;
+    if ($copie !== null) $colonnes['copie'] = $copie;
+    $colonnes['cree_le'] = maintenant();
     try {
-        bd()->prepare('INSERT INTO notification (utilisateur_id, destinataire, sujet, corps, envoyer_apres,
-                                                 objet_type, objet_id, cle_unicite, expediteur, cree_le)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
-            ->execute([$utilisateur_id, $destinataire, $sujet, $corps,
-                       $envoyer_apres ?? maintenant(), $objet_type, $objet_id,
-                       $cle_unicite !== '' ? $cle_unicite : null, $expediteur, maintenant()]);
+        bd()->prepare('INSERT INTO notification (' . implode(', ', array_keys($colonnes)) . ')
+                       VALUES (' . implode(', ', array_fill(0, count($colonnes), '?')) . ')')
+            ->execute(array_values($colonnes));
         $id = (int)bd()->lastInsertId();
     } catch (PDOException) {
         return false;   // doublon volontairement ignoré (clé d'unicité)
     }
 
     if ($urgent && PHP_SAPI !== 'cli' && $envoyer_apres === null) {
-        $r = expedier_courriel($destinataire, $sujet, $corps, $expediteur);
+        $r = expedier_courriel($destinataire, $sujet, $corps, $expediteur, $repondre_a, $copie);
         bd()->prepare('UPDATE notification SET etat = ?, tentatives = 1, envoye_le = ?, derniere_erreur = ?
                        WHERE id = ?')
             ->execute([$r['ok'] ? 'envoye' : 'en_attente', $r['ok'] ? maintenant() : null, $r['erreur'], $id]);
@@ -141,14 +153,23 @@ function expediteur_technique(): string
  * doit être acceptée par le compte qui s'authentifie (alias ou « envoyer en tant que »),
  * sans quoi le serveur réécrit le champ « De ».
  *
+ * $repondre_a remplace CONTACT_COURRIEL dans le Reply-To ; $copie ajoute un destinataire en
+ * Cc (ignoré s'il est le destinataire lui-même). Le pied du message garde l'adresse de contact.
+ *
  * @return array{ok:bool, erreur:string}
  */
-function expedier_courriel(string $destinataire, string $sujet, string $corps, ?string $expediteur = null): array
+function expedier_courriel(string $destinataire, string $sujet, string $corps, ?string $expediteur = null,
+                           ?string $repondre_a = null, ?string $copie = null): array
 {
     $html = courriel_html($sujet, $corps);
     $nom_expediteur = socle_param('EMAIL_EXPEDITEUR_NOM', 'Notification');
-    $contact = socle_param('CONTACT_COURRIEL', EMAIL_EXPEDITEUR);
     $de = trim((string)$expediteur) !== '' ? trim((string)$expediteur) : EMAIL_EXPEDITEUR;
+    $contact = trim((string)$repondre_a) !== '' ? trim((string)$repondre_a)
+             : socle_param('CONTACT_COURRIEL', EMAIL_EXPEDITEUR);
+    $copie = trim((string)$copie);
+    if (strcasecmp($copie, $destinataire) === 0) $copie = '';
+    // Une adresse d'en-tête ne contient jamais de retour à la ligne (injection d'en-têtes).
+    if (preg_match('/[\r\n]/', $contact . $copie)) return ['ok' => false, 'erreur' => 'adresse de réponse ou de copie invalide'];
     $smtp = courriel_smtp();
 
     if ($smtp !== null && !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
@@ -175,6 +196,7 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
             $mail->setFrom($de, $nom_expediteur);
             $mail->addAddress($destinataire);
             if ($contact !== $de) $mail->addReplyTo($contact);
+            if ($copie !== '') $mail->addCC($copie);
             $mail->addCustomHeader('Auto-Submitted', 'auto-generated');
             $mail->Subject = $sujet;
             $mail->isHTML(true);
@@ -189,6 +211,7 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
 
     $entetes = "From: $nom_expediteur <$de>\r\n"
              . "Reply-To: $contact\r\n"
+             . ($copie !== '' ? "Cc: $copie\r\n" : '')
              . "Content-Type: text/plain; charset=UTF-8\r\nMIME-Version: 1.0\r\n"
              . "Auto-Submitted: auto-generated";
     $sujet_encode = '=?UTF-8?B?' . base64_encode(str_replace(["\r", "\n"], '', $sujet)) . '?=';
@@ -273,7 +296,8 @@ function file_traiter(bool $forcer = false): array
     $echecs = 0;
 
     foreach ($req->fetchAll() as $n) {
-        $r = expedier_courriel($n['destinataire'], $n['sujet'], $n['corps'], $n['expediteur'] ?? null);
+        $r = expedier_courriel($n['destinataire'], $n['sujet'], $n['corps'], $n['expediteur'] ?? null,
+                              $n['repondre_a'] ?? null, $n['copie'] ?? null);
         if ($r['ok']) {
             $pdo->prepare("UPDATE notification SET etat = 'envoye', envoye_le = ?, tentatives = tentatives + 1
                            WHERE id = ?")->execute([maintenant(), $n['id']]);

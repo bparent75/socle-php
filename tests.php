@@ -105,6 +105,25 @@ verifie('l’expéditeur propre au message est mémorisé en file',
 verifie('sans expéditeur propre, la colonne reste vide',
     $pdo->query("SELECT expediteur FROM notification WHERE cle_unicite = 'cle-1'")->fetchColumn() === null);
 
+titre('Réponse et copie par message');
+filer_courriel('f@example.invalid', 'Groupe', 'Corps', null, 'cle-rep', null, '', null, false, null,
+    'auteur@example.invalid', 'auteur@example.invalid');
+$ligne = $pdo->query("SELECT repondre_a, copie FROM notification WHERE cle_unicite = 'cle-rep'")->fetch();
+verifie('Reply-To et Cc propres au message mémorisés en file',
+    $ligne['repondre_a'] === 'auteur@example.invalid' && $ligne['copie'] === 'auteur@example.invalid');
+verifie('sans eux, les colonnes restent vides',
+    $pdo->query("SELECT repondre_a FROM notification WHERE cle_unicite = 'cle-exp'")->fetchColumn() === null);
+$pdo->exec('ALTER TABLE notification RENAME TO notification_v15');
+$pdo->exec('CREATE TABLE notification AS SELECT id, utilisateur_id, destinataire, sujet, corps, etat, tentatives,
+            derniere_erreur, envoyer_apres, envoye_le, objet_type, objet_id, cle_unicite, expediteur, cree_le
+            FROM notification_v15 WHERE 0');
+verifie('une table sans ces colonnes accepte toujours les messages ordinaires',
+    filer_courriel('g@example.invalid', 'Ancien', 'Corps'));
+$pdo->exec('DROP TABLE notification');
+$pdo->exec('ALTER TABLE notification_v15 RENAME TO notification');
+verifie('une adresse de réponse avec retour à la ligne est refusée',
+    !expedier_courriel('h@example.invalid', 'x', 'y', null, "a@example.invalid\r\nBcc: z@example.invalid")['ok']);
+
 titre('Réglages SMTP');
 verifie('sans SMTP_HOTE, envoi par mail()', courriel_smtp() === null);
 define('SMTP_HOTE', 'smtp.example.invalid');
