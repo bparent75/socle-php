@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS notification (
     cle_unicite     TEXT UNIQUE,          -- empêche le doublon de rappel
     expediteur      TEXT,                 -- « De » propre au message, sinon EMAIL_EXPEDITEUR
     repondre_a      TEXT,                 -- Reply-To propre au message, sinon CONTACT_COURRIEL
-    copie           TEXT,                 -- Cc propre au message
+    copie           TEXT,                 -- Cc propre au message, une ou plusieurs adresses (1.6)
     cree_le         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_notif_file ON notification(etat, envoyer_apres);

@@ -64,7 +64,8 @@ function socle_param(string $constante, string $defaut = ''): string
  * message reste en file et sera repris normalement.
  *
  * $repondre_a remplace CONTACT_COURRIEL dans le Reply-To de ce message (la personne qui l'a
- * rédigé, par exemple) ; $copie ajoute une adresse en Cc. Les deux demandent les colonnes
+ * rédigé, par exemple) ; $copie met en Cc une adresse, ou plusieurs séparées par des virgules
+ * (1.6 : les autres adresses d'une même famille, par exemple). Les deux demandent les colonnes
  * `repondre_a` et `copie` de la table (voir sql/) ; tant qu'on ne s'en sert pas, elles ne
  * sont pas écrites, et un projet qui ne les a pas encore créées continue de fonctionner.
  */
@@ -144,6 +145,32 @@ function expediteur_technique(): string
 }
 
 /**
+ * Découpe une liste d'adresses (séparées par des virgules ou des points-virgules) en
+ * adresses propres, sans doublon (casse ignorée), sans celles de $exclure (le destinataire
+ * principal, typiquement). Rend null si l'une d'elles est invalide : mieux vaut un envoi
+ * refusé et visible qu'une copie perdue en silence.
+ *
+ * @param string[] $exclure
+ * @return string[]|null
+ */
+function courriel_adresses(string $liste, array $exclure = []): ?array
+{
+    $vues = [];
+    foreach ($exclure as $e) $vues[mb_strtolower(trim($e))] = true;
+    $adresses = [];
+    foreach (preg_split('/[,;]/', $liste) as $morceau) {
+        $adresse = trim($morceau);
+        if ($adresse === '') continue;
+        if (filter_var($adresse, FILTER_VALIDATE_EMAIL) === false) return null;
+        $cle = mb_strtolower($adresse);
+        if (isset($vues[$cle])) continue;
+        $vues[$cle] = true;
+        $adresses[] = $adresse;
+    }
+    return $adresses;
+}
+
+/**
  * Remet un message au serveur de courrier.
  *
  * ATTENTION : « vrai » signifie que le message a été accepté, pas qu'il est arrivé.
@@ -153,8 +180,10 @@ function expediteur_technique(): string
  * doit être acceptée par le compte qui s'authentifie (alias ou « envoyer en tant que »),
  * sans quoi le serveur réécrit le champ « De ».
  *
- * $repondre_a remplace CONTACT_COURRIEL dans le Reply-To ; $copie ajoute un destinataire en
- * Cc (ignoré s'il est le destinataire lui-même). Le pied du message garde l'adresse de contact.
+ * $repondre_a remplace CONTACT_COURRIEL dans le Reply-To ; $copie met en Cc une adresse ou
+ * plusieurs, séparées par des virgules (doublons et destinataire lui-même retirés, voir
+ * courriel_adresses()). Une adresse de copie invalide fait échouer l'envoi plutôt que de
+ * partir sans elle. Le pied du message garde l'adresse de contact.
  *
  * @return array{ok:bool, erreur:string}
  */
@@ -166,10 +195,10 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
     $de = trim((string)$expediteur) !== '' ? trim((string)$expediteur) : EMAIL_EXPEDITEUR;
     $contact = trim((string)$repondre_a) !== '' ? trim((string)$repondre_a)
              : socle_param('CONTACT_COURRIEL', EMAIL_EXPEDITEUR);
-    $copie = trim((string)$copie);
-    if (strcasecmp($copie, $destinataire) === 0) $copie = '';
     // Une adresse d'en-tête ne contient jamais de retour à la ligne (injection d'en-têtes).
-    if (preg_match('/[\r\n]/', $contact . $copie)) return ['ok' => false, 'erreur' => 'adresse de réponse ou de copie invalide'];
+    if (preg_match('/[\r\n]/', $contact . (string)$copie)) return ['ok' => false, 'erreur' => 'adresse de réponse ou de copie invalide'];
+    $copies = courriel_adresses((string)$copie, [$destinataire]);
+    if ($copies === null) return ['ok' => false, 'erreur' => 'adresse de copie invalide'];
     $smtp = courriel_smtp();
 
     if ($smtp !== null && !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
@@ -196,7 +225,7 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
             $mail->setFrom($de, $nom_expediteur);
             $mail->addAddress($destinataire);
             if ($contact !== $de) $mail->addReplyTo($contact);
-            if ($copie !== '') $mail->addCC($copie);
+            foreach ($copies as $adresse) $mail->addCC($adresse);
             $mail->addCustomHeader('Auto-Submitted', 'auto-generated');
             $mail->Subject = $sujet;
             $mail->isHTML(true);
@@ -211,7 +240,7 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
 
     $entetes = "From: $nom_expediteur <$de>\r\n"
              . "Reply-To: $contact\r\n"
-             . ($copie !== '' ? "Cc: $copie\r\n" : '')
+             . ($copies !== [] ? 'Cc: ' . implode(', ', $copies) . "\r\n" : '')
              . "Content-Type: text/plain; charset=UTF-8\r\nMIME-Version: 1.0\r\n"
              . "Auto-Submitted: auto-generated";
     $sujet_encode = '=?UTF-8?B?' . base64_encode(str_replace(["\r", "\n"], '', $sujet)) . '?=';

@@ -73,7 +73,7 @@ Le socle s'adapte au projet plutôt que l'inverse :
 | Constante `NOM_SESSION` | Nom du cookie de session, sans avoir à le passer à chaque appel |
 | Constantes `MARQUE_NOM`, `MARQUE_BLEU`, `CONTACT_COURRIEL` | Habillage des courriels |
 | Constante `EMAIL_EXPEDITEUR_TECHNIQUE` | Adresse « ne pas répondre » des seuls messages techniques (`expediteur_technique()`, à passer en paramètre `$expediteur` de `filer_courriel`) ; `EMAIL_EXPEDITEUR` reste l'adresse humaine |
-| Colonnes `repondre_a`, `copie` (1.5) | Reply-To et Cc propres à un message (deux derniers paramètres de `filer_courriel`), par exemple la personne de l'équipe qui a rédigé un envoi groupé. Facultatives : sans elles, la file fonctionne comme avant tant qu'on ne les utilise pas |
+| Colonnes `repondre_a`, `copie` (1.5) | Reply-To et Cc propres à un message (deux derniers paramètres de `filer_courriel`), par exemple la personne de l'équipe qui a rédigé un envoi groupé. Depuis la 1.6, `copie` accepte plusieurs adresses séparées par des virgules (une famille dans un seul message) : passer la colonne en `TEXT`. Facultatives : sans elles, la file fonctionne comme avant tant qu'on ne les utilise pas |
 | Constantes `SMTP_HOTE`, `SMTP_PORT`, `SMTP_UTILISATEUR`, `SMTP_MOT_DE_PASSE` | Envoi par SMTP (PHPMailer) au lieu du `mail()` de l'hébergement — indispensable quand le SPF du domaine ne cite pas l'hébergeur ; port 465 = TLS implicite, sinon STARTTLS |
 | `porte_demo(['entete_html' => …, 'css' => …, 'titre' => …])` | Logo et feuille de style du projet sur l'écran d'accès |
 

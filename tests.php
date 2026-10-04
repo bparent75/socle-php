@@ -121,6 +121,18 @@ verifie('une table sans ces colonnes accepte toujours les messages ordinaires',
     filer_courriel('g@example.invalid', 'Ancien', 'Corps'));
 $pdo->exec('DROP TABLE notification');
 $pdo->exec('ALTER TABLE notification_v15 RENAME TO notification');
+verifie('copie multiple : découpée, dédoublonnée, sans le destinataire',
+    courriel_adresses('a@example.invalid, B@example.invalid; b@example.invalid,, f@example.invalid', ['F@example.invalid'])
+    === ['a@example.invalid', 'B@example.invalid']);
+verifie('copie multiple : une adresse invalide refuse toute la liste',
+    courriel_adresses('a@example.invalid, pas-une-adresse') === null);
+verifie('copie vide : aucune adresse', courriel_adresses('') === []);
+verifie('une copie invalide fait échouer l’envoi',
+    !expedier_courriel('h@example.invalid', 'x', 'y', null, null, 'a@example.invalid, faux')['ok']);
+filer_courriel('m@example.invalid', 'Famille', 'Corps', null, 'cle-fam', null, '', null, false, null, null,
+    'p@example.invalid, e@example.invalid');
+verifie('plusieurs adresses en copie mémorisées en file',
+    $pdo->query("SELECT copie FROM notification WHERE cle_unicite = 'cle-fam'")->fetchColumn() === 'p@example.invalid, e@example.invalid');
 verifie('une adresse de réponse avec retour à la ligne est refusée',
     !expedier_courriel('h@example.invalid', 'x', 'y', null, "a@example.invalid\r\nBcc: z@example.invalid")['ok']);
 
