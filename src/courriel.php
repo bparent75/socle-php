@@ -248,7 +248,7 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
             $mail->Encoding = 'base64';
             $mail->setFrom($de, $nom_expediteur);
             // Identifiant du message au domaine de l'expéditeur (1.7.1) : sinon PHPMailer prend le nom
-            // du serveur, et un message signé ipesup.fr porte un identifiant d'un autre domaine.
+            // du serveur : un message signé pour un domaine porterait l'identifiant d'un autre.
             if (($identifiant = courriel_message_id($de)) !== '') $mail->MessageID = $identifiant;
             $mail->addAddress($destinataire);
             if ($contact !== $de) $mail->addReplyTo($contact);
