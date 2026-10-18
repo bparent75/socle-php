@@ -144,6 +144,11 @@ verifie('options propres au message mémorisées en file',
     ($o['apercu'] ?? '') === 'Aperçu' && ($o['accent'][0] ?? '') === 'https://exemple.invalid/a');
 verifie('sans options, la colonne reste vide',
     $pdo->query("SELECT options FROM notification WHERE cle_unicite = 'cle-1'")->fetchColumn() === null);
+$id1 = courriel_message_id('Robot@Example.invalid');
+verifie('identifiant de message au domaine de l’expéditeur, unique',
+    (bool)preg_match('/^<[0-9a-f]{32}@example\.invalid>$/', $id1) && $id1 !== courriel_message_id('robot@example.invalid'));
+verifie('identifiant de message : adresse sans domaine exploitable, PHPMailer garde le sien',
+    courriel_message_id('sans-arobase') === '' && courriel_message_id('x@localhost') === '' && courriel_message_id('x@exa_mple.invalid') === '');
 verifie('un nom d’expéditeur avec retour à la ligne est refusé',
     !expedier_courriel('h@example.invalid', 'x', 'y', null, null, null, ['expediteur_nom' => "Nom\r\nBcc: z@example.invalid"])['ok']);
 

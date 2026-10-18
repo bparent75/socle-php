@@ -247,6 +247,9 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
             $mail->CharSet = 'UTF-8';
             $mail->Encoding = 'base64';
             $mail->setFrom($de, $nom_expediteur);
+            // Identifiant du message au domaine de l'expéditeur (1.7.1) : sinon PHPMailer prend le nom
+            // du serveur, et un message signé ipesup.fr porte un identifiant d'un autre domaine.
+            if (($identifiant = courriel_message_id($de)) !== '') $mail->MessageID = $identifiant;
             $mail->addAddress($destinataire);
             if ($contact !== $de) $mail->addReplyTo($contact);
             foreach ($copies as $adresse) $mail->addCC($adresse);
@@ -273,6 +276,21 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
     $sujet_encode = '=?UTF-8?B?' . base64_encode(str_replace(["\r", "\n"], '', $sujet)) . '?=';
     $ok = @mail($destinataire, $sujet_encode, wordwrap($texte, 78, "\r\n"), $entetes);
     return ['ok' => (bool)$ok, 'erreur' => $ok ? '' : 'mail() a renvoyé une erreur'];
+}
+
+/**
+ * Identifiant de message (en-tête Message-ID) au domaine de l'expéditeur : « <aléa@domaine> ».
+ * Un identifiant au nom du serveur d'hébergement, alors que le message est signé pour le domaine de
+ * l'expéditeur, est un décalage que relèvent les filtres anti-spam. Chaîne vide si l'adresse n'a pas
+ * de domaine exploitable : PHPMailer garde alors le sien.
+ */
+function courriel_message_id(string $expediteur): string
+{
+    $domaine = mb_strtolower(trim((string)substr($expediteur, (int)strrpos($expediteur, '@') + 1)));
+    if (!str_contains($expediteur, '@') || !preg_match('/^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/', $domaine)) {
+        return '';
+    }
+    return '<' . bin2hex(random_bytes(16)) . '@' . $domaine . '>';
 }
 
 /**
