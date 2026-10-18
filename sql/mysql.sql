@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS notification (
     expediteur      VARCHAR(190),                 -- « De » propre au message, sinon EMAIL_EXPEDITEUR
     repondre_a      VARCHAR(190),                 -- Reply-To propre au message, sinon CONTACT_COURRIEL
     copie           TEXT,                         -- Cc propre au message, une ou plusieurs adresses (1.6)
+    options         TEXT,                         -- habillage propre au message, en JSON (1.7)
     cree_le         TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_notif_file ON notification(etat, envoyer_apres);

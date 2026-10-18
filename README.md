@@ -72,8 +72,11 @@ Le socle s'adapte au projet plutôt que l'inverse :
 | Fonction `param(string $cle, string $defaut)` | Consultée avant les constantes : permet de rendre une valeur modifiable par l'équipe (adresse de contact, nom de marque) au lieu de la figer |
 | Constante `NOM_SESSION` | Nom du cookie de session, sans avoir à le passer à chaque appel |
 | Constantes `MARQUE_NOM`, `MARQUE_BLEU`, `CONTACT_COURRIEL` | Habillage des courriels |
+| Constantes `MARQUE_ACCENT`, `MARQUE_BLEU_CLAIR` (1.7) | Couleur des boutons d'accent (défaut `#E74310`) et filet des encadrés (défaut : `MARQUE_BLEU`) |
 | Constante `EMAIL_EXPEDITEUR_TECHNIQUE` | Adresse « ne pas répondre » des seuls messages techniques (`expediteur_technique()`, à passer en paramètre `$expediteur` de `filer_courriel`) ; `EMAIL_EXPEDITEUR` reste l'adresse humaine |
 | Colonnes `repondre_a`, `copie` (1.5) | Reply-To et Cc propres à un message (deux derniers paramètres de `filer_courriel`), par exemple la personne de l'équipe qui a rédigé un envoi groupé. Depuis la 1.6, `copie` accepte plusieurs adresses séparées par des virgules (une famille dans un seul message) : passer la colonne en `TEXT`. Facultatives : sans elles, la file fonctionne comme avant tant qu'on ne les utilise pas |
+| Colonne `options` (1.7) | Habillage propre à un message (dernier paramètre de `filer_courriel`, en JSON) : texte d'aperçu masqué, logo et illustration **intégrés au message** (pièces jointes en ligne `cid:`, fichiers locaux PNG/JPEG/GIF d'1 Mo au plus), boutons de couleur d'accent, texte du bandeau, pied et adresse de contact du pied, nom d'expéditeur. Facultative, comme les deux précédentes. Détail dans l'en-tête de `courriel_html()` |
+| Balisage du corps (1.7) | Le texte reste la référence ; quelques conventions l'habillent en HTML et disparaissent de la version texte (`courriel_texte()`) : `Libellé : https://…` seul sur sa ligne = bouton qui porte ce libellé, `# ` = intertitre, lignes `- ` = encadré à puces (titre avant, note après), `> ` = note discrète, `---` = filet, et dans le texte `[texte](https://…)`, `**gras**`, `*italique*`. Typographie française (espaces insécables) appliquée au rendu |
 | Constantes `SMTP_HOTE`, `SMTP_PORT`, `SMTP_UTILISATEUR`, `SMTP_MOT_DE_PASSE` | Envoi par SMTP (PHPMailer) au lieu du `mail()` de l'hébergement — indispensable quand le SPF du domaine ne cite pas l'hébergeur ; port 465 = TLS implicite, sinon STARTTLS |
 | `porte_demo(['entete_html' => …, 'css' => …, 'titre' => …])` | Logo et feuille de style du projet sur l'écran d'accès |
 
@@ -105,10 +108,10 @@ Trois façons, par ordre de préférence :
 php tests.php
 ```
 
-53 contrôles sur une base SQLite en mémoire : formats, signatures, limitation des
+91 contrôles (83 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
 tentatives, unicité et annulation dans la file, garde-fou d'envoi en session SSH,
-échappement du gabarit, bornage du journal, porte de démonstration, QR code.
-Aucun fichier touché sur disque, aucun courriel envoyé.
+échappement et habillage du gabarit (boutons, encadrés, images intégrées), bornage du journal, porte de démonstration, QR code.
+Aucun courriel envoyé ; seule une image d'un pixel est écrite dans le répertoire temporaire, puis effacée.
 
 ## Provenance
 

@@ -136,6 +136,17 @@ verifie('plusieurs adresses en copie mémorisées en file',
 verifie('une adresse de réponse avec retour à la ligne est refusée',
     !expedier_courriel('h@example.invalid', 'x', 'y', null, "a@example.invalid\r\nBcc: z@example.invalid")['ok']);
 
+titre('Habillage par message (1.7)');
+filer_courriel('o@example.invalid', 'Habillé', 'Corps', null, 'cle-opt', null, '', null, false, null, null, null,
+    ['apercu' => 'Aperçu', 'accent' => ['https://exemple.invalid/a']]);
+$o = json_decode((string)$pdo->query("SELECT options FROM notification WHERE cle_unicite = 'cle-opt'")->fetchColumn(), true);
+verifie('options propres au message mémorisées en file',
+    ($o['apercu'] ?? '') === 'Aperçu' && ($o['accent'][0] ?? '') === 'https://exemple.invalid/a');
+verifie('sans options, la colonne reste vide',
+    $pdo->query("SELECT options FROM notification WHERE cle_unicite = 'cle-1'")->fetchColumn() === null);
+verifie('un nom d’expéditeur avec retour à la ligne est refusé',
+    !expedier_courriel('h@example.invalid', 'x', 'y', null, null, null, ['expediteur_nom' => "Nom\r\nBcc: z@example.invalid"])['ok']);
+
 titre('Réglages SMTP');
 verifie('sans SMTP_HOTE, envoi par mail()', courriel_smtp() === null);
 define('SMTP_HOTE', 'smtp.example.invalid');
@@ -154,6 +165,61 @@ verifie('l’adresse est aussi donnée en clair', substr_count($html, 'exemple.i
 verifie('aucune image distante', !str_contains($html, '<img'));
 verifie('le contenu est échappé', str_contains(courriel_html('x', '<script>alert(1)</script>'), '&lt;script&gt;'));
 verifie('mention d’absence de données de dossier', str_contains($html, 'aucune donnée personnelle'));
+
+titre('Gabarit habillé (1.7)');
+$corps = "Bonjour Léa,\n\n# 1. Connectez-vous\n\nAller sur le campus : https://exemple.invalid/connexion\n\n"
+       . "Votre offre comprend :\n- le module sur *Titre* ;\n- 2 corrections.\nNote sous la liste.\n\n"
+       . "Choisir : https://exemple.invalid/choix\n\n"
+       . "> Petite note avec [un lien](https://exemple.invalid/l) et **gras**.\n\n---\n\nFin !";
+$html = courriel_html('Bienvenue, Léa !', $corps, 'Ouvrir', [
+    'accent' => ['https://exemple.invalid/choix'], 'apercu' => 'Trois étapes', 'bandeau' => 'MARQUE',
+    'pied' => 'Pied propre au message.', 'contact' => 'familles@example.invalid']);
+verifie('bouton à libellé', str_contains($html, '>Aller sur le campus</a>')
+    && str_contains($html, 'href="https://exemple.invalid/connexion"'));
+verifie('un bouton à libellé ne répète pas son adresse en clair', substr_count($html, 'exemple.invalid/connexion') === 1);
+verifie('bouton d’accent pour l’adresse désignée, bleu pour les autres',
+    str_contains($html, 'background:#E74310"><a href="https://exemple.invalid/choix"')
+    && str_contains($html, 'background:#054570"><a href="https://exemple.invalid/connexion"'));
+verifie('intertitre', str_contains($html, '1. Connectez-vous</h2>') && !str_contains($html, '# 1.'));
+verifie('encadré à puces : titre, deux puces, note', substr_count($html, '<li ') === 2
+    && str_contains($html, 'Votre offre comprend') && str_contains($html, 'Note sous la liste.'));
+verifie('italique, gras et lien dans le texte', str_contains($html, '<em>Titre</em>')
+    && str_contains($html, '<strong>gras</strong>') && str_contains($html, '<a href="https://exemple.invalid/l"'));
+verifie('note discrète et filet', str_contains($html, '<hr') && !str_contains($html, '&gt; Petite'));
+verifie('typographie française : espace insécable avant « ! »',
+    str_contains($html, "Fin\u{00A0}!") && str_contains($html, "Léa\u{00A0}!</h1>"));
+verifie('texte d’aperçu présent mais masqué', str_contains($html, 'display:none') && str_contains($html, 'Trois étapes'));
+verifie('pied et contact propres au message', str_contains($html, 'Pied propre au message.')
+    && str_contains($html, 'mailto:familles@example.invalid') && !str_contains($html, 'aucune donnée personnelle'));
+verifie('seules les adresses http(s) deviennent des liens',
+    !str_contains(courriel_html('x', '[clic](javascript:alert(1))'), 'href="javascript'));
+verifie('le contenu des puces est échappé', str_contains(courriel_html('x', "Titre\n- <b>x</b>"), '&lt;b&gt;'));
+verifie('une phrase terminée par une adresse ne devient pas un bouton',
+    !str_contains(courriel_html('x', 'Pour en savoir plus, voyez ici : https://exemple.invalid/p'), 'border-radius:999px;background'));
+$texte = courriel_texte($corps);
+verifie('version texte : balisage retiré, adresses gardées', str_contains($texte, "\n\n1. Connectez-vous\n\n")
+    && str_contains($texte, 'un lien (https://exemple.invalid/l) et gras') && str_contains($texte, "- le module sur Titre\u{00A0};")
+    && !str_contains($texte, '---') && !str_contains($texte, '> ')
+    && str_contains($texte, "Aller sur le campus\u{00A0}: https://exemple.invalid/connexion"));
+verifie('version texte d’un corps sans balisage : inchangée',
+    courriel_texte("Bonjour,\n\nhttps://exemple.invalid/x") === "Bonjour,\n\nhttps://exemple.invalid/x");
+// Une image d'un pixel, écrite dans le répertoire temporaire puis effacée.
+$png = sys_get_temp_dir() . '/socle-essai-' . bin2hex(random_bytes(4)) . '.png';
+file_put_contents($png, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='));
+$images = courriel_images(['logo' => $png, 'illustration' => __FILE__]);
+verifie('image locale retenue, fichier qui n’est pas une image écarté', isset($images['logo'])
+    && !isset($images['illustration']) && $images['logo']['type'] === 'image/png' && $images['logo']['hauteur'] === 130);
+verifie('ni adresse distante ni flux comme image',
+    courriel_images(['logo' => 'https://exemple.invalid/logo.png', 'illustration' => 'data://image/png;base64,AAAA']) === []);
+$html = courriel_html('x', 'y', 'Ouvrir', ['logo' => $png, 'illustration' => $png, 'bandeau' => 'MARQUE']);
+verifie('logo et illustration en pièces jointes en ligne, jamais distants',
+    str_contains($html, 'src="cid:logo@courriel"') && str_contains($html, 'src="cid:illustration@courriel"')
+    && !preg_match('#<img[^>]+src="https?:#', $html) && str_contains($html, '>MARQUE</td>'));
+verifie('aperçu dans un navigateur : images en data:',
+    str_contains(courriel_html('x', 'y', 'Ouvrir', ['logo' => $png, 'src_images' => 'data']), 'src="data:image/png;base64,'));
+unlink($png);
+verifie('logo absent : le bandeau retombe sur le nom, sans échec',
+    str_contains(courriel_html('x', 'y', 'Ouvrir', ['logo' => $png, 'bandeau' => 'MARQUE']), '>MARQUE</td>'));
 
 titre('Journal d’audit');
 journaliser('essai', 'objet', 42, 'detail', 7);
