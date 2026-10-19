@@ -16,6 +16,9 @@
  *   - facultatif, la colonne `options` de la table, pour l'habillage propre à un message :
  *     texte d'aperçu, logo et illustration intégrés, boutons d'accent, pied (socle 1.7, voir
  *     courriel_html())
+ *   - facultatif, la colonne `message_id` de la table : l'identifiant (en-tête Message-ID) de
+ *     chaque message remis y est noté, pour rapprocher un avis de non-remise du courriel exact
+ *     (socle 1.8, voir rebonds.php)
  *   - la table `notification` (voir sql/)
  *   - phpmailer/phpmailer, sinon repli en texte seul
  *
@@ -111,6 +114,7 @@ function filer_courriel(string $destinataire, string $sujet, string $corps,
         bd()->prepare('UPDATE notification SET etat = ?, tentatives = 1, envoye_le = ?, derniere_erreur = ?
                        WHERE id = ?')
             ->execute([$r['ok'] ? 'envoye' : 'en_attente', $r['ok'] ? maintenant() : null, $r['erreur'], $id]);
+        if ($r['ok']) courriel_noter_message_id($id, $r['message_id'] ?? '');
     }
     return true;
 }
@@ -204,7 +208,10 @@ function courriel_adresses(string $liste, array $exclure = []): ?array
  * remplace EMAIL_EXPEDITEUR_NOM. Le logo et l'illustration partent en pièces jointes en ligne
  * (cid:) : ils s'affichent même quand la messagerie bloque les images distantes.
  *
- * @return array{ok:bool, erreur:string}
+ * Le retour porte l'identifiant du message remis (en-tête Message-ID, 1.8) : un avis de non-remise
+ * le cite, ce qui le rattache au courriel exact. Chaîne vide si le message n'est pas parti.
+ *
+ * @return array{ok:bool, erreur:string, message_id:string}
  */
 function expedier_courriel(string $destinataire, string $sujet, string $corps, ?string $expediteur = null,
                            ?string $repondre_a = null, ?string $copie = null, ?array $options = null): array
@@ -219,14 +226,14 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
              : socle_param('CONTACT_COURRIEL', EMAIL_EXPEDITEUR);
     // Une adresse ou un nom d'en-tête ne contient jamais de retour à la ligne (injection d'en-têtes).
     if (preg_match('/[\r\n]/', $contact . (string)$copie . $nom_expediteur)) {
-        return ['ok' => false, 'erreur' => 'adresse de réponse, de copie ou nom d\'expéditeur invalide'];
+        return ['ok' => false, 'erreur' => 'adresse de réponse, de copie ou nom d\'expéditeur invalide', 'message_id' => ''];
     }
     $copies = courriel_adresses((string)$copie, [$destinataire]);
-    if ($copies === null) return ['ok' => false, 'erreur' => 'adresse de copie invalide'];
+    if ($copies === null) return ['ok' => false, 'erreur' => 'adresse de copie invalide', 'message_id' => ''];
     $smtp = courriel_smtp();
 
     if ($smtp !== null && !class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
-        return ['ok' => false, 'erreur' => 'SMTP configuré mais phpmailer/phpmailer absent'];
+        return ['ok' => false, 'erreur' => 'SMTP configuré mais phpmailer/phpmailer absent', 'message_id' => ''];
     }
 
     if (class_exists(\PHPMailer\PHPMailer\PHPMailer::class)) {
@@ -262,20 +269,23 @@ function expedier_courriel(string $destinataire, string $sujet, string $corps, ?
                 $mail->addEmbeddedImage($image['chemin'], $image['cid'], basename($image['chemin']), 'base64', $image['type']);
             }
             $mail->send();
-            return ['ok' => true, 'erreur' => ''];
+            return ['ok' => true, 'erreur' => '', 'message_id' => (string)$mail->getLastMessageID()];
         } catch (Throwable $e) {
-            return ['ok' => false, 'erreur' => mb_substr($e->getMessage(), 0, 200)];
+            return ['ok' => false, 'erreur' => mb_substr($e->getMessage(), 0, 200), 'message_id' => ''];
         }
     }
 
+    // Identifiant posé ici plutôt que par sendmail : il est alors connu, et noté dans la file.
+    $identifiant = courriel_message_id($de);
     $entetes = "From: $nom_expediteur <$de>\r\n"
+             . ($identifiant !== '' ? "Message-ID: $identifiant\r\n" : '')
              . "Reply-To: $contact\r\n"
              . ($copies !== [] ? 'Cc: ' . implode(', ', $copies) . "\r\n" : '')
              . "Content-Type: text/plain; charset=UTF-8\r\nMIME-Version: 1.0\r\n"
              . "Auto-Submitted: auto-generated";
     $sujet_encode = '=?UTF-8?B?' . base64_encode(str_replace(["\r", "\n"], '', $sujet)) . '?=';
     $ok = @mail($destinataire, $sujet_encode, wordwrap($texte, 78, "\r\n"), $entetes);
-    return ['ok' => (bool)$ok, 'erreur' => $ok ? '' : 'mail() a renvoyé une erreur'];
+    return ['ok' => (bool)$ok, 'erreur' => $ok ? '' : 'mail() a renvoyé une erreur', 'message_id' => $ok ? $identifiant : ''];
 }
 
 /**
@@ -291,6 +301,38 @@ function courriel_message_id(string $expediteur): string
         return '';
     }
     return '<' . bin2hex(random_bytes(16)) . '@' . $domaine . '>';
+}
+
+/**
+ * Note l'identifiant d'un message remis dans la file (1.8), si la table a la colonne `message_id`.
+ * Un projet qui ne l'a pas encore ajoutée continue de fonctionner : rien n'est écrit.
+ */
+function courriel_noter_message_id(int $id, string $message_id): void
+{
+    $message_id = trim($message_id);
+    if ($message_id === '' || !socle_colonne('notification', 'message_id')) return;
+    bd()->prepare('UPDATE notification SET message_id = ? WHERE id = ?')->execute([mb_substr($message_id, 0, 250), $id]);
+}
+
+/**
+ * La table a-t-elle cette colonne ? Réponse gardée pour la durée de la requête. Sert aux colonnes
+ * facultatives (1.8) : une base créée par un socle plus ancien ne les a pas tant que le projet ne
+ * les a pas ajoutées, et le socle doit alors s'en passer plutôt que d'échouer. SQLite et MySQL.
+ */
+function socle_colonne(string $table, string $colonne): bool
+{
+    static $connues = [];
+    if (!preg_match('/^[a-z_][a-z0-9_]*$/', $table . $colonne)) return false;
+    $cle = $table . '.' . $colonne;
+    if (!isset($connues[$cle])) {
+        try {
+            bd()->query("SELECT $colonne FROM $table LIMIT 0");
+            $connues[$cle] = true;
+        } catch (PDOException) {
+            $connues[$cle] = false;
+        }
+    }
+    return $connues[$cle];
 }
 
 /**
@@ -578,6 +620,7 @@ function file_traiter(bool $forcer = false): array
         if ($r['ok']) {
             $pdo->prepare("UPDATE notification SET etat = 'envoye', envoye_le = ?, tentatives = tentatives + 1
                            WHERE id = ?")->execute([maintenant(), $n['id']]);
+            courriel_noter_message_id((int)$n['id'], $r['message_id'] ?? '');
             $envoyes++;
             continue;
         }

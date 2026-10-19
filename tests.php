@@ -30,7 +30,7 @@ foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as 
     if (is_file($candidat)) { require $candidat; break; }
 }
 if (!function_exists('h')) {
-    foreach (['formats', 'securite', 'courriel', 'journal', 'porte_demo'] as $brique) {
+    foreach (['formats', 'securite', 'courriel', 'rebonds', 'journal', 'porte_demo'] as $brique) {
         require __DIR__ . "/src/$brique.php";
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
@@ -225,6 +225,95 @@ verifie('aperçu dans un navigateur : images en data:',
 unlink($png);
 verifie('logo absent : le bandeau retombe sur le nom, sans échec',
     str_contains(courriel_html('x', 'y', 'Ouvrir', ['logo' => $png, 'bandeau' => 'MARQUE']), '>MARQUE</td>'));
+
+titre('Courriels non remis');
+verifie('colonne présente reconnue, colonne absente refusée sans erreur',
+    socle_colonne('notification', 'message_id') && !socle_colonne('notification', 'colonne_absente')
+    && !socle_colonne('notification; DROP', 'x'));
+filer_courriel('eleve@example.invalid', 'Bienvenue', 'Corps', null, 'rebond-1');
+$n1 = (int)bd()->query("SELECT id FROM notification WHERE cle_unicite = 'rebond-1'")->fetchColumn();
+courriel_noter_message_id($n1, '<origine1@example.invalid>');
+bd()->exec("UPDATE notification SET etat = 'envoye', envoye_le = '" . gmdate('Y-m-d\TH:i:s\Z', time() - 7200) . "' WHERE id = $n1");
+verifie('identifiant du message remis noté dans la file',
+    bd()->query("SELECT message_id FROM notification WHERE id = $n1")->fetchColumn() === '<origine1@example.invalid>');
+filer_courriel('autre@example.invalid', 'Lien', 'Corps', null, 'rebond-2', null, '', null, false, null, null, 'parent@example.invalid');
+$n2 = (int)bd()->query("SELECT id FROM notification WHERE cle_unicite = 'rebond-2'")->fetchColumn();
+bd()->exec("UPDATE notification SET etat = 'envoye', envoye_le = '" . gmdate('Y-m-d\TH:i:s\Z', time() - 3600) . "' WHERE id = $n2");
+
+// Un avis à la mode Postfix (relais d'envoi) pour un refus de Google : partie normalisée, copie des
+// en-têtes d'origine. Tout est fictif.
+$date = gmdate('D, d M Y H:i:s', time() - 600) . ' +0000 (UTC)';
+$avis = "Return-Path: <>\r\nDate: $date\r\nFrom: MAILER-DAEMON@example.invalid (Mail Delivery System)\r\n"
+    . "Subject: Undelivered Mail Returned to Sender\r\nTo: essai@example.invalid\r\nMessage-ID:\r\n <avis1@example.invalid>\r\n"
+    . "Content-Type: multipart/report; report-type=delivery-status;\r\n\tboundary=\"B\"\r\n\r\n"
+    . "--B\r\nContent-Type: text/plain\r\n\r\nI'm sorry to have to inform you that your message could not be delivered.\r\n\r\n"
+    . "--B\r\nContent-Type: message/delivery-status\r\n\r\nReporting-MTA: dns; relais.example.invalid\r\n"
+    . "Arrival-Date: $date\r\n\r\nFinal-Recipient: rfc822; Eleve@example.invalid\r\nOriginal-Recipient: rfc822;eleve@example.invalid\r\n"
+    . "Action: failed\r\nStatus: 5.1.1\r\nRemote-MTA: dns; mx.example.invalid\r\nDiagnostic-Code: smtp; 550-5.1.1 The email account that you tried\r\n"
+    . "    to reach does not exist. Please try 550-5.1.1 double-checking the\r\n    recipient's email address. 550 5.1.1 gsmtp\r\n\r\n"
+    . "--B\r\nContent-Type: text/rfc822-headers\r\n\r\nFrom: Essai <essai@example.invalid>\r\nTo: eleve@example.invalid\r\n"
+    . "Message-ID: <origine1@example.invalid>\r\nSubject: Bienvenue\r\n\r\n--B--\r\n";
+$a = rebond_analyser($avis);
+verifie('avis : identifiant propre, distinct de celui du courriel d’origine',
+    $a['cle'] === '<avis1@example.invalid>' && $a['origine'] === ['<origine1@example.invalid>']);
+$d = $a['destinataires'][0] ?? [];
+verifie('avis : adresse en échec, code 5.1.1, échec définitif, non remis', count($a['destinataires']) === 1
+    && $d['adresse'] === 'eleve@example.invalid' && $d['statut'] === '5.1.1' && $d['gravite'] === 'definitif' && $d['non_remis']);
+verifie('avis : diagnostic sur une ligne, codes répétés retirés',
+    $d['diagnostic'] === "The email account that you tried to reach does not exist. Please try double-checking the recipient's email address. gsmtp");
+verifie('avis : date de réception lue malgré le commentaire (UTC)', $a['recu_le'] !== null && abs(strtotime($a['recu_le']) - (time() - 600)) < 5);
+
+$retard = "Date: $date\r\nMessage-ID: <avis2@example.invalid>\r\nSubject: Delivery Status Notification (Delay)\r\n\r\n"
+    . "Final-Recipient: rfc822; lente@example.invalid\r\nAction: delayed\r\nStatus: 4.4.7\r\n  \r\n"   // ligne d'espaces : sépare
+    . "Final-Recipient: rfc822; abandon@example.invalid\r\nAction: failed\r\nStatus: 4.4.1\r\n\r\n"
+    . "Final-Recipient: rfc822; bonne@example.invalid\r\nAction: delivered\r\nStatus: 2.0.0\r\n";
+$a = rebond_analyser($retard);
+$par = array_column($a['destinataires'], null, 'adresse');
+verifie('retard 4.x.x : temporaire, pas encore non remis', ($par['lente@example.invalid']['gravite'] ?? '') === 'temporaire'
+    && ($par['lente@example.invalid']['non_remis'] ?? true) === false);
+verifie('remise réussie ignorée', !isset($par['bonne@example.invalid']));
+verifie('abandon sur un code 4.x.x : non remis, mais l’adresse reste en gravité temporaire',
+    ($par['abandon@example.invalid']['gravite'] ?? '') === 'temporaire' && ($par['abandon@example.invalid']['non_remis'] ?? false) === true);
+verifie('gravité : code absent mais réponse 550 = définitif ; delivered = pas un échec',
+    rebond_gravite('failed', '', 'smtp; 550 no such user') === 'definitif' && rebond_gravite('delivered', '2.0.0') === '');
+
+$libre = "Date: $date\r\nMessage-ID: <avis3@example.invalid>\r\nSubject: failure notice\r\n\r\n"
+    . "Sorry, we were unable to deliver your message to the following address.\r\n\r\n"
+    . "<parent@example.invalid>:\r\nRemote host said: 550 5.2.1 user unknown\r\n\r\n"
+    . "--- Below this line is a copy of the message.\r\nFrom: essai@example.invalid\r\nTo: inconnue@example.invalid\r\n";
+$a = rebond_analyser($libre, ['parent@example.invalid' => true, 'essai@example.invalid' => true]);
+verifie('avis en texte libre : seules les adresses connues, code relevé dans le texte',
+    count($a['destinataires']) === 2 && $a['destinataires'][0]['adresse'] === 'parent@example.invalid'
+    && $a['destinataires'][0]['statut'] === '5.2.1' && $a['destinataires'][0]['diagnostic'] === 'Remote host said: user unknown');
+
+verifie('lecture non configurée sans hôte IMAP', rebonds_reglages() === null && !rebonds_configure()
+    && rebonds_relever()['erreur'] !== null);
+$incompris = "Date: $date\r\nMessage-ID: <avis4@example.invalid>\r\nSubject: Undeliverable\r\n\r\nRien d'exploitable.\r\n";
+$GLOBALS['rebonds_boite'] = fn(int $jours, int $max): array => ['erreur' => null, 'messages' => [
+    ['cle' => 'imap-1', 'brut' => $avis], ['cle' => 'imap-2', 'brut' => $libre], ['cle' => 'imap-3', 'brut' => $incompris],
+    ['cle' => 'imap-4', 'brut' => $avis]]];
+$b = rebonds_relever();
+verifie('relevé : 3 avis nouveaux (le doublon sauté), 2 adresses en échec, 1 avis non compris',
+    $b['erreur'] === null && $b['lus'] === 4 && $b['nouveaux'] === 3 && $b['definitifs'] === 2 && $b['incompris'] === 1
+    && count($b['retours']) === 2, json_encode($b));
+verifie('l’adresse d’envoi du projet n’est jamais prise pour une adresse en échec',
+    !in_array('essai@example.invalid', array_column($b['retours'], 'adresse'), true));
+$r = array_column($b['retours'], null, 'adresse');
+verifie('rapprochement exact par l’identifiant du message', ($r['eleve@example.invalid']['notification_id'] ?? 0) === $n1);
+verifie('rapprochement par l’adresse en copie, à défaut d’identifiant', ($r['parent@example.invalid']['notification_id'] ?? 0) === $n2);
+verifie('courriels marqués non remis', $b['rapproches'] === 2
+    && (int)bd()->query("SELECT COUNT(*) FROM notification WHERE rebond_le IS NOT NULL AND id IN ($n1, $n2)")->fetchColumn() === 2);
+$b2 = rebonds_relever();
+verifie('second relevé : rien de nouveau', $b2['nouveaux'] === 0 && $b2['retours'] === []);
+verifie('adresse en échec définitif reconnue, casse ignorée ; une autre non',
+    (rebond_actif('ELEVE@example.invalid')['statut'] ?? '') === '5.1.1' && rebond_actif('autre@example.invalid') === null);
+verifie('échecs d’une liste d’adresses', array_keys(rebonds_actifs(['parent@example.invalid', 'autre@example.invalid']))
+    === ['parent@example.invalid']);
+verifie('adresse vérifiée : l’échec ne bloque plus, rien n’est supprimé', rebonds_lever('eleve@example.invalid', 7) === 1
+    && rebond_actif('eleve@example.invalid') === null && count(rebonds_de('eleve@example.invalid')) === 1);
+verifie('libellés des codes', rebond_libelle('5.1.1') === 'boîte inexistante' && rebond_libelle('5.7.26') === 'refusé par le serveur du destinataire'
+    && rebond_libelle('4.4.7', 'temporaire') === 'remise retardée' && rebond_libelle('', 'definitif') === 'non remis');
+unset($GLOBALS['rebonds_boite']);
 
 titre('Journal d’audit');
 journaliser('essai', 'objet', 42, 'detail', 7);
