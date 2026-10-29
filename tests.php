@@ -30,7 +30,8 @@ foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as 
     if (is_file($candidat)) { require $candidat; break; }
 }
 if (!function_exists('h')) {
-    foreach (['formats', 'securite', 'courriel', 'rebonds', 'journal', 'porte_demo', 'totp'] as $brique) {
+    foreach (['formats', 'securite', 'bd', 'parametres', 'connexion', 'courriel', 'rebonds',
+              'journal', 'csv', 'ical', 'porte_demo', 'totp'] as $brique) {
         require __DIR__ . "/src/$brique.php";
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
@@ -323,6 +324,153 @@ verifie('site indexable par défaut', site_indexable());
 define('MOT_DE_PASSE_DEMO', 'secret');
 verifie('verrouillée avec la constante', demonstration_verrouillee());
 verifie('site non indexable quand verrouillé', !site_indexable());
+
+titre('Paramètres (table config)');
+verifie('défaut quand la clé manque', param('clef-inconnue', 'repli') === 'repli');
+param_definir('couleur', 'bleu');
+verifie('valeur écrite puis relue aussitôt (cache invalidé)', param('couleur') === 'bleu');
+param_definir('couleur', 'rouge');
+verifie('valeur remplacée', param('couleur') === 'rouge');
+verifie('socle_param() consulte param() avant les constantes', socle_param('COULEUR', 'x') === 'rouge');
+
+titre('SQL portable et migrations additives');
+verifie('base de test reconnue comme SQLite', !bd_mysql());
+verifie('insert ignoré selon le moteur', sql_insert_ignore() === 'INSERT OR IGNORE');
+verifie('upsert selon le moteur',
+    sql_sur_doublon('cle', ['valeur', 'maj_le']) === 'ON CONFLICT(cle) DO UPDATE SET valeur = excluded.valeur, maj_le = excluded.maj_le');
+colonne_assurer(bd(), 'journal', 'colonne_essai', "TEXT NOT NULL DEFAULT ''");
+colonne_assurer(bd(), 'journal', 'colonne_essai', "TEXT NOT NULL DEFAULT ''");
+$colonnes = array_column(bd()->query('PRAGMA table_info(journal)')->fetchAll(), 'name');
+verifie('colonne ajoutée, ajout rejouable sans erreur', count(array_keys($colonnes, 'colonne_essai', true)) === 1);
+try { colonne_assurer(bd(), 'journal; DROP TABLE journal', 'x', 'TEXT'); $refuse = false; }
+catch (InvalidArgumentException) { $refuse = true; }
+verifie('nom de table invalide refusé', $refuse);
+
+titre('Connexion par lien magique et rôles');
+define('ADMINS_AMORCAGE', ['chef@example.org', 'binome@example.org' => 'Binôme',
+                           'modele@example.invalid']);
+amorcer_admins();
+amorcer_admins();   // rejouable
+verifie('admins amorcés une seule fois, modèle example.invalid ignoré',
+    (int)bd()->query("SELECT COUNT(*) FROM utilisateur WHERE role = 'admin'")->fetchColumn() === 2);
+verifie('nom repris de la forme adresse => nom',
+    bd()->query("SELECT nom FROM utilisateur WHERE courriel = 'binome@example.org'")->fetchColumn() === 'Binôme');
+bd()->exec("UPDATE utilisateur SET actif = 0 WHERE courriel = 'chef@example.org'");
+amorcer_admins();
+verifie('un compte désactivé ne renaît pas à l\'amorçage',
+    (int)bd()->query("SELECT actif FROM utilisateur WHERE courriel = 'chef@example.org'")->fetchColumn() === 0);
+bd()->exec("UPDATE utilisateur SET actif = 1 WHERE courriel = 'chef@example.org'");
+
+verifie('durée du lien : 30 minutes par défaut', duree_lien_magique() === 1800);
+verifie('adresse invalide : réponse identique, rien d\'envoyé', lien_magique_envoyer('pas-une-adresse')
+    && (int)bd()->query('SELECT COUNT(*) FROM jeton_connexion')->fetchColumn() === 0);
+verifie('adresse inconnue : réponse identique, rien d\'envoyé', lien_magique_envoyer('personne@example.org')
+    && (int)bd()->query('SELECT COUNT(*) FROM jeton_connexion')->fetchColumn() === 0);
+verifie('adresse connue : lien envoyé', lien_magique_envoyer('CHEF@example.org')
+    && (int)bd()->query('SELECT COUNT(*) FROM jeton_connexion')->fetchColumn() === 1);
+$corps = (string)bd()->query("SELECT corps FROM notification WHERE objet_type = 'connexion'
+                              ORDER BY id DESC LIMIT 1")->fetchColumn();
+preg_match('/jeton=([A-Za-z0-9_-]+)/', $corps, $m);
+$jeton_magique = $m[1] ?? '';
+verifie('le courriel porte le lien et sa durée', $jeton_magique !== '' && str_contains($corps, '30 minutes'));
+verifie('le jeton n\'est jamais en clair en base',
+    bd()->query('SELECT COUNT(*) FROM jeton_connexion WHERE empreinte = ' . bd()->quote($jeton_magique))->fetchColumn() === 0
+    && bd()->query('SELECT empreinte FROM jeton_connexion ORDER BY id DESC LIMIT 1')->fetchColumn() === hacher_jeton($jeton_magique));
+$u = lien_magique_consommer($jeton_magique);
+verifie('jeton consommé : utilisateur rendu, dernière connexion notée',
+    ($u['courriel'] ?? '') === 'chef@example.org'
+    && bd()->query("SELECT derniere_connexion FROM utilisateur WHERE courriel = 'chef@example.org'")->fetchColumn() !== null);
+verifie('un lien ne sert qu\'une fois', lien_magique_consommer($jeton_magique) === null);
+verifie('jeton inconnu refusé', lien_magique_consommer('nimporte-quoi') === null);
+// Jeton expiré : posé à la main avec une échéance passée.
+$jeton_perime = jeton_aleatoire();
+bd()->prepare('INSERT INTO jeton_connexion (utilisateur_id, empreinte, expire_le, cree_le) VALUES (?, ?, ?, ?)')
+    ->execute([1, hacher_jeton($jeton_perime), gmdate('Y-m-d\TH:i:s\Z', time() - 60), maintenant()]);
+verifie('jeton expiré refusé', lien_magique_consommer($jeton_perime) === null);
+// Compte désactivé après l'envoi du lien : le lien ne vaut plus rien.
+lien_magique_envoyer('binome@example.org');
+preg_match('/jeton=([A-Za-z0-9_-]+)/', (string)bd()->query("SELECT corps FROM notification WHERE objet_type = 'connexion'
+    ORDER BY id DESC LIMIT 1")->fetchColumn(), $m);
+bd()->exec("UPDATE utilisateur SET actif = 0 WHERE courriel = 'binome@example.org'");
+verifie('compte désactivé : son lien ne vaut plus rien', lien_magique_consommer($m[1] ?? '') === null);
+bd()->exec("UPDATE utilisateur SET actif = 1 WHERE courriel = 'binome@example.org'");
+for ($i = 0; $i < 5; $i++) $encore = lien_magique_envoyer('abuse@example.org');
+verifie('limitation par adresse : la sixième demande est bloquée, et dite',
+    $encore && !lien_magique_envoyer('abuse@example.org'));
+verifie('est_admin selon le rôle', est_admin(['role' => 'admin']) && !est_admin(['role' => 'equipe']) && !est_admin());
+verifie('deux admins actifs : aucun n\'est le dernier', !dernier_admin_actif(1) && !dernier_admin_actif(2));
+bd()->exec("UPDATE utilisateur SET actif = 0 WHERE courriel = 'binome@example.org'");
+verifie('un seul admin actif : lui seul est le dernier', dernier_admin_actif(1) && !dernier_admin_actif(2));
+bd()->exec("UPDATE utilisateur SET actif = 1 WHERE courriel = 'binome@example.org'");
+
+titre('Export CSV pour Excel');
+$flux = fopen('php://memory', 'w+');
+$n = csv_ecrire($flux, ['Nom', 'Détail'], [['Léa', '=1+2'], ['Zoé;bis', '10,5']]);
+rewind($flux);
+$csv = stream_get_contents($flux);
+fclose($flux);
+verifie('BOM UTF-8 en tête', str_starts_with($csv, "\u{FEFF}"));
+verifie('séparateur point-virgule', str_contains($csv, "Nom;Détail"));
+verifie('deux lignes écrites, champ à point-virgule protégé par des guillemets',
+    $n === 2 && str_contains($csv, '"Zoé;bis"'));
+verifie('cellule-formule neutralisée', str_contains($csv, "'=1+2") && csv_cellule('-2') === "'-2"
+    && csv_cellule('@x') === "'@x" && csv_cellule('10,5') === '10,5');
+$flux = fopen('php://memory', 'w+');
+csv_ecrire($flux, ['x'], [['=brut']], ['proteger_formules' => false]);
+rewind($flux);
+verifie('protection débrayable quand la colonne l\'exige', str_contains(stream_get_contents($flux), "=brut")
+    && !str_contains((string)stream_get_contents($flux, -1, 0), "'=brut"));
+fclose($flux);
+
+titre('Formats complémentaires');
+verifie('nombre décimal à la française', nombre_fr(3.5) === '3,5' && nombre_fr(2.0) === '2'
+    && nombre_fr(1234.56) === '1 234,56' && nombre_fr(1250.0) === '1 250');
+verifie('accord du mot au nombre', accorder(1, 'atelier') === '1 atelier' && accorder(3, 'atelier') === '3 ateliers'
+    && accorder(2, 'bac blanc', 'bacs blancs') === '2 bacs blancs');
+verifie('initiales des deux premiers mots', initiales('Léa Dupont') === 'LD' && initiales('élise') === 'É'
+    && initiales('Anne-Claire de la Tour') === 'AD' && initiales('  ') === '?');
+verifie('accents retirés, casse conservée', sans_accents('Éléonore Ça œuvre, NOËL') === 'Eleonore Ca oeuvre, NOEL');
+
+titre('Liens signés révocables');
+$s = signature_revocable('dispo/7', 'dispo_version');
+verifie('signature courte et stable', strlen($s) === 24 && $s === signature_revocable('dispo/7', 'dispo_version'));
+verifie('signature acceptée', signature_revocable_valide('dispo/7', 'dispo_version', $s));
+verifie('autre cible, signature vide ou clé différente : refusées',
+    !signature_revocable_valide('dispo/8', 'dispo_version', $s)
+    && !signature_revocable_valide('dispo/7', 'dispo_version', '')
+    && !signature_revocable_valide('dispo/7', 'autre_version', $s));
+signature_revoquer('dispo_version');
+verifie('révocation : les liens distribués cessent de valoir, les nouveaux valent',
+    !signature_revocable_valide('dispo/7', 'dispo_version', $s)
+    && signature_revocable_valide('dispo/7', 'dispo_version', signature_revocable('dispo/7', 'dispo_version'))
+    && param('dispo_version') === '2');
+verifie('longueur au choix', strlen(signature_revocable('catalogue', 'catalogue_version', 32)) === 32);
+
+titre('Export iCal');
+$ics = ical_calendrier([
+    ['uid' => 'e-1@example.org', 'debut' => '2026-11-05 18:00', 'fin' => '2026-11-05 19:30',
+     'resume' => 'Séance 3, salle B; répétition', 'lieu' => 'Paris, salle B',
+     'description' => "Ligne 1\nLigne 2", 'statut' => 'confirme'],
+    ['uid' => 'e-2@example.org', 'debut' => '2026-11-12 18:00:00', 'fin' => '2026-11-12 19:30:00',
+     'resume' => str_repeat('é', 60), 'statut' => 'provisoire'],
+    ['uid' => 'e-3@example.org', 'debut' => '2026-11-19 18:00', 'fin' => '2026-11-19 19:30',
+     'resume' => 'Relâche', 'statut' => 'annule'],
+], ['nom' => 'Essai Socle']);
+verifie('enveloppe VCALENDAR et fuseau Europe/Paris', str_starts_with($ics, "BEGIN:VCALENDAR\r\n")
+    && str_ends_with($ics, "END:VCALENDAR\r\n") && str_contains($ics, 'TZID:Europe/Paris')
+    && str_contains($ics, 'X-WR-CALNAME:Essai Socle'));
+verifie('heures locales déclarées avec le fuseau',
+    str_contains($ics, 'DTSTART;TZID=Europe/Paris:20261105T180000')
+    && str_contains($ics, 'DTEND;TZID=Europe/Paris:20261112T193000'));
+verifie('virgules, points-virgules et retours à la ligne échappés',
+    str_contains($ics, 'SUMMARY:Séance 3\, salle B\; répétition')
+    && str_contains($ics, 'DESCRIPTION:Ligne 1\nLigne 2') && str_contains($ics, 'LOCATION:Paris\, salle B'));
+verifie('statuts traduits', str_contains($ics, 'STATUS:CONFIRMED') && str_contains($ics, 'STATUS:TENTATIVE')
+    && str_contains($ics, 'STATUS:CANCELLED'));
+$lignes_ics = explode("\r\n", $ics);
+verifie('aucune ligne au-delà de 75 octets', max(array_map('strlen', $lignes_ics)) <= 75);
+verifie('pliage sans couper un caractère en deux (contenu long intact une fois déplié)',
+    str_contains(str_replace("\r\n ", '', $ics), str_repeat('é', 60)));
 
 titre('Second facteur TOTP');
 // Vecteurs de la RFC 6238 (annexe B), réduits à six chiffres : secret ASCII

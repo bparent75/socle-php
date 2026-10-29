@@ -52,8 +52,13 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 
 | Fichier | Rôle |
 |---|---|
-| `src/formats.php` | Français : dates (« lundi 21 septembre 2026 à 14h30 »), montants, adresses lisibles, échappement |
-| `src/securite.php` | Session et HTTPS derrière un proxy, jeton CSRF, limitation des tentatives, jetons hachés, liens signés |
+| `src/formats.php` | Français : dates (« lundi 21 septembre 2026 à 14h30 »), montants, nombres (`nombre_fr`, 2.0), accord (`accorder`), initiales, retrait d'accents, adresses lisibles, échappement |
+| `src/securite.php` | Session et HTTPS derrière un proxy, jeton CSRF, limitation des tentatives, jetons hachés, liens signés à expiration, liens signés **révocables par version** (`signature_revocable`, 2.0) |
+| `src/connexion.php` | Connexion par lien magique et rôles (2.0) : `utilisateur_courant()`, `exiger_connexion()`, `exiger_admin()`, amorçage des admins — voir plus bas |
+| `src/parametres.php` | `param()` / `param_definir()` : valeurs modifiables par l'équipe, table `config` (2.0) |
+| `src/bd.php` | SQL portable SQLite/MySQL : `sql_insert_ignore()`, `sql_sur_doublon()`, et la migration additive `colonne_assurer()` (2.0) |
+| `src/csv.php` | Export CSV pour Excel en français (2.0) : BOM UTF-8, séparateur `;`, cellules-formules neutralisées |
+| `src/ical.php` | Export iCal RFC 5545 (2.0) : heures locales Europe/Paris, pliage qui respecte l'UTF-8 |
 | `src/courriel.php` | File d'envoi avec reprise, gabarit HTML, et le garde-fou des envois refusés en session SSH |
 | `src/rebonds.php` | Courriels non remis (1.8) : avis de non-remise lus en IMAP sans rien marquer lu, échec définitif (5.x.x) ou temporaire (4.x.x), rapprochés du courriel parti, adresse en échec jusqu'à vérification |
 | `src/journal.php` | Journal d'audit |
@@ -71,8 +76,11 @@ Le socle s'adapte au projet plutôt que l'inverse :
 
 | Attente | Effet |
 |---|---|
-| Fonction `param(string $cle, string $defaut)` | Consultée avant les constantes : permet de rendre une valeur modifiable par l'équipe (adresse de contact, nom de marque) au lieu de la figer |
+| Fonction `param(string $cle, string $defaut)` | Consultée avant les constantes : permet de rendre une valeur modifiable par l'équipe (adresse de contact, nom de marque) au lieu de la figer. Depuis la 2.0 le socle la fournit (`src/parametres.php`, table `config`) ; un projet qui a la sienne la garde (gardes `function_exists`) |
 | Constante `NOM_SESSION` | Nom du cookie de session, sans avoir à le passer à chaque appel |
+| Constante `CHEMIN_SESSION` (2.0) | Chemin du cookie de session (« /calendrier/ » pour un site en sous-répertoire) ; « / » à défaut. Aussi en second paramètre de `demarrer_session()` |
+| Constante `ADMINS_AMORCAGE` (2.0) | Comptes administrateurs créés s'ils n'existent pas (`amorcer_admins()`) : liste d'adresses, ou tableau adresse => nom. Les adresses en `example.invalid` (modèle recopié) sont ignorées |
+| Constantes `DUREE_LIEN_MAGIQUE`, `URL_CONNEXION` (2.0) | Durée du lien de connexion (1800 s à défaut) et page qui le reçoit (`URL_BASE . '/connexion.php'` à défaut) |
 | Constantes `MARQUE_NOM`, `MARQUE_BLEU`, `CONTACT_COURRIEL` | Habillage des courriels |
 | Constantes `MARQUE_ACCENT`, `MARQUE_BLEU_CLAIR` (1.7) | Couleur des boutons d'accent (défaut `#E74310`) et filet des encadrés (défaut : `MARQUE_BLEU`) |
 | Constante `EMAIL_EXPEDITEUR_TECHNIQUE` | Adresse « ne pas répondre » des seuls messages techniques (`expediteur_technique()`, à passer en paramètre `$expediteur` de `filer_courriel`) ; `EMAIL_EXPEDITEUR` reste l'adresse humaine |
@@ -128,16 +136,65 @@ et note chaque échec dans la table `rebond`.
 - **Piège OVH** : le nœud SSH d'un mutualisé ne sort pas (IMAP comme SMTP). Un essai de
   connexion se fait depuis la tâche planifiée ou une page, jamais depuis une session SSH.
 
+## Connexion par lien magique et rôles (2.0)
+
+La brique était réécrite dans cinq projets ; ses décisions sont figées dans
+`src/connexion.php` : aucun mot de passe (un lien à usage unique, 30 minutes, envoyé
+par courriel), jeton haché en base (jamais en clair), réponse identique que l'adresse
+soit connue ou non, anti-abus **en base** par adresse et par appelant (jamais en
+session), consommation **atomique** du jeton, identifiant de session régénéré.
+
+Page de connexion type :
+
+```php
+if (($_POST['action'] ?? '') === 'demander') {
+    verifier_csrf();
+    $ok = lien_magique_envoyer((string)($_POST['courriel'] ?? ''));
+    $message = $ok ? 'Si cette adresse est connue, un lien vient de lui être envoyé.'
+                   : 'Trop de demandes : réessayez dans un quart d’heure.';
+}
+if (isset($_GET['jeton']) && lien_magique_consommer((string)$_GET['jeton']) !== null) {
+    header('Location: index.php');
+    exit;
+}
+```
+
+Chaque page privée commence par `exiger_connexion()`, `exiger_role('equipe')` ou
+`exiger_admin()` (le rôle `admin` passe partout ; les autres valeurs appartiennent au
+projet). `dernier_admin_actif()` empêche de désactiver le dernier compte
+d'administration. Un projet à rôles multiples ou par saison garde sa propre
+implémentation : toutes ces fonctions sont gardées par `function_exists`.
+
+## Harnais de vérification locale : `outils/` (2.0)
+
+Pour les postes sans PHP (PHP-WASM). Publié une fois ici, au lieu de trois copies
+reliées par chemins relatifs entre dépôts :
+
+```bash
+(cd outils && npm install)      # une fois par clone (versions épinglées)
+node outils/executer-cli.mjs tests.php                      # depuis le socle
+RACINE="$(pwd)" node vendor/bparent75/socle-php/outils/executer-cli.mjs tests.php   # depuis un projet
+node outils/lint.js src/*.php   # syntaxe seule (php-parser), rapide
+```
+
+`outils/banc.php` publie `verifie()`, `titre()` et `bilan()` pour les `tests.php` des
+projets. Le lanceur ne monte **que la racine du projet** et sort explicitement — les
+deux causes de la panne du 16 septembre 2026 (chargement suspendu par le montage du
+disque entier, boucle d'événements jamais rendue). La vérification qui fait foi reste
+`php tests.php` sur le serveur.
+
 ## Tests
 
 ```bash
-php tests.php
+php tests.php                           # sur un poste avec PHP
+node outils/executer-cli.mjs tests.php  # sans PHP (PHP-WASM, voir ci-dessus)
 ```
 
-115 contrôles (107 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
+168 contrôles (160 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
 tentatives, unicité et annulation dans la file, garde-fou d'envoi en session SSH,
 échappement et habillage du gabarit (boutons, encadrés, images intégrées), avis de non-remise (analyse, gravité,
-rapprochement, boîte simulée), bornage du journal, porte de démonstration, QR code.
+rapprochement, boîte simulée), bornage du journal, porte de démonstration, paramètres,
+migrations additives, connexion par lien magique, export CSV, liens révocables, iCal, TOTP, QR code.
 Aucun courriel envoyé ; seule une image d'un pixel est écrite dans le répertoire temporaire, puis effacée.
 
 ## Provenance

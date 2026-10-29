@@ -180,3 +180,49 @@ if (!function_exists('entetes_prives')) {
         header('X-Frame-Options: DENY');
     }
 }
+
+// ---------------------------------------------------------------------------
+// Liens signés révocables par version
+// ---------------------------------------------------------------------------
+
+if (!function_exists('signature_revocable')) {
+    /**
+     * Signature d'un lien permanent mais révocable d'un bloc : flux iCal, catalogue,
+     * page personnelle sans compte. À la différence de signer(), elle n'expire pas ;
+     * en échange, elle intègre une version tirée de la table config (param()), et
+     * signature_revoquer() invalide d'un coup tous les liens déjà distribués.
+     *
+     *   url : "flux.php?i=$id&s=" . signature_revocable("dispo/$id", 'dispo_version')
+     *   contrôle : hash_equals(signature_revocable("dispo/$id", 'dispo_version'), $_GET['s'])
+     *
+     * Ce motif était répété cinq fois (calendrier, inscriptions), révocation comprise —
+     * mais aucun écran ne révoquait : il fallait éditer la table à la main.
+     */
+    function signature_revocable(string $cible, string $cle_version, int $longueur = 24): string
+    {
+        // La clé de version fait partie de la charge signée : deux familles de liens
+        // restent distinctes même si leurs versions ont la même valeur.
+        return substr(hash_hmac('sha256', $cible . '/' . $cle_version . '/' . param($cle_version, '1'), SEL_SITE),
+                      0, $longueur);
+    }
+}
+
+if (!function_exists('signature_revocable_valide')) {
+    /** Contrôle en temps constant d'une signature reçue (403 à la charge de l'appelant). */
+    function signature_revocable_valide(string $cible, string $cle_version, string $signature, int $longueur = 24): bool
+    {
+        return $signature !== '' && hash_equals(signature_revocable($cible, $cle_version, $longueur), $signature);
+    }
+}
+
+if (!function_exists('signature_revoquer')) {
+    /**
+     * Révoque d'un bloc tous les liens signés sous cette clé : la version est
+     * incrémentée, les liens déjà distribués cessent de valoir, les prochains
+     * signature_revocable() signent la nouvelle version.
+     */
+    function signature_revoquer(string $cle_version): void
+    {
+        param_definir($cle_version, (string)((int)param($cle_version, '1') + 1));
+    }
+}

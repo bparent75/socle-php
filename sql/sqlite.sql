@@ -64,3 +64,33 @@ CREATE TABLE IF NOT EXISTS rebond (
     UNIQUE (cle, adresse)
 );
 CREATE INDEX IF NOT EXISTS idx_rebond_adresse ON rebond(adresse, gravite);
+
+-- Paramètres modifiables par l'équipe (src/parametres.php) : param() / param_definir().
+-- Les liens signés révocables (signature_revocable, src/securite.php) y rangent leur version.
+CREATE TABLE IF NOT EXISTS config (
+    cle    TEXT PRIMARY KEY,
+    valeur TEXT NOT NULL DEFAULT ''
+);
+
+-- Connexion par lien magique et rôles (src/connexion.php). « admin » a tous les droits ;
+-- les autres valeurs de role appartiennent au projet (« equipe », « compta »…).
+CREATE TABLE IF NOT EXISTS utilisateur (
+    id                 INTEGER PRIMARY KEY,
+    courriel           TEXT NOT NULL UNIQUE COLLATE NOCASE,
+    prenom             TEXT NOT NULL DEFAULT '',
+    nom                TEXT NOT NULL DEFAULT '',
+    role               TEXT NOT NULL DEFAULT 'equipe',
+    actif              INTEGER NOT NULL DEFAULT 1,
+    derniere_connexion TEXT,
+    cree_le            TEXT NOT NULL
+);
+
+-- Jetons de lien magique : hachés (jamais en clair), usage unique, à durée courte.
+CREATE TABLE IF NOT EXISTS jeton_connexion (
+    id             INTEGER PRIMARY KEY,
+    utilisateur_id INTEGER NOT NULL REFERENCES utilisateur(id),
+    empreinte      TEXT NOT NULL UNIQUE,
+    expire_le      TEXT NOT NULL,
+    utilise_le     TEXT,
+    cree_le        TEXT NOT NULL
+);

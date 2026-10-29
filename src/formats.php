@@ -142,3 +142,60 @@ if (!function_exists('taille_lisible')) {
         return str_replace('.', ',', (string)round($octets / (1024 * 1024), 1)) . ' Mo';
     }
 }
+
+if (!function_exists('nombre_fr')) {
+    /**
+     * Nombre décimal à la française : « 3,5 », « 1 250 », « 2 » (zéros finaux retirés).
+     * Pour accorder un mot au nombre, voir accorder() ; pour un montant, euros().
+     */
+    function nombre_fr(float $n, int $decimales = 2): string
+    {
+        return rtrim(rtrim(number_format($n, $decimales, ',', ' '), '0'), ',');
+    }
+}
+
+if (!function_exists('accorder')) {
+    /** « 1 bac blanc corrigé », « 3 bacs blancs corrigés » : le nombre et le mot accordé. */
+    function accorder(int $n, string $singulier, ?string $pluriel = null): string
+    {
+        return $n . ' ' . ($n > 1 ? ($pluriel ?? $singulier . 's') : $singulier);
+    }
+}
+
+if (!function_exists('initiales')) {
+    /** Initiales d'un nom (deux premiers mots) : vignette ou portrait absent — rien d'inventé. */
+    function initiales(string $nom): string
+    {
+        $mots = preg_split('/\s+/u', trim($nom), -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        $i = '';
+        foreach (array_slice($mots, 0, 2) as $m) $i .= mb_strtoupper(mb_substr($m, 0, 1));
+        return $i !== '' ? $i : '?';
+    }
+}
+
+if (!function_exists('sans_accents')) {
+    /**
+     * Retire les accents par une table fixe : le résultat ne dépend ni de la locale ni
+     * d'intl (iconv('ASCII//TRANSLIT') produit « sp'ecialit'es » sur certains systèmes).
+     * La casse est conservée : pour une clé de comparaison, mb_strtolower(sans_accents()).
+     */
+    function sans_accents(string $s): string
+    {
+        static $table = [
+            'à'=>'a','á'=>'a','â'=>'a','ã'=>'a','ä'=>'a','å'=>'a','ā'=>'a',
+            'À'=>'A','Á'=>'A','Â'=>'A','Ã'=>'A','Ä'=>'A','Å'=>'A',
+            'è'=>'e','é'=>'e','ê'=>'e','ë'=>'e','ē'=>'e','ě'=>'e',
+            'È'=>'E','É'=>'E','Ê'=>'E','Ë'=>'E',
+            'ì'=>'i','í'=>'i','î'=>'i','ï'=>'i','ī'=>'i',
+            'Ì'=>'I','Í'=>'I','Î'=>'I','Ï'=>'I',
+            'ò'=>'o','ó'=>'o','ô'=>'o','õ'=>'o','ö'=>'o','ø'=>'o','ō'=>'o',
+            'Ò'=>'O','Ó'=>'O','Ô'=>'O','Õ'=>'O','Ö'=>'O','Ø'=>'O',
+            'ù'=>'u','ú'=>'u','û'=>'u','ü'=>'u','ū'=>'u','ů'=>'u',
+            'Ù'=>'U','Ú'=>'U','Û'=>'U','Ü'=>'U',
+            'ý'=>'y','ÿ'=>'y','Ý'=>'Y','Ÿ'=>'Y',
+            'ç'=>'c','Ç'=>'C','ñ'=>'n','Ñ'=>'N',
+            'œ'=>'oe','Œ'=>'OE','æ'=>'ae','Æ'=>'AE','ß'=>'ss',
+        ];
+        return strtr($s, $table);
+    }
+}

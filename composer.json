@@ -1,6 +1,6 @@
 {
     "name": "bparent75/socle-php",
-    "description": "Briques PHP réutilisables : formats français, sécurité, second facteur TOTP, file de courriels et avis de non-remise, journal d'audit, QR code.",
+    "description": "Briques PHP réutilisables : formats français, sécurité, connexion par lien magique, second facteur TOTP, file de courriels et avis de non-remise, journal d'audit, QR code.",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -16,9 +16,14 @@
         "files": [
             "src/formats.php",
             "src/securite.php",
+            "src/bd.php",
+            "src/parametres.php",
+            "src/connexion.php",
             "src/courriel.php",
             "src/rebonds.php",
             "src/journal.php",
+            "src/csv.php",
+            "src/ical.php",
             "src/porte_demo.php",
             "src/qrcode.php",
             "src/totp.php"
