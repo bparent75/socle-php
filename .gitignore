@@ -1,6 +1,8 @@
 # Ce dépôt est PUBLIC. Tout ce qui pourrait porter un secret est exclu par défaut.
 vendor/
 composer.lock
+outils/node_modules/
+.cli-temporaire.php
 .DS_Store
 *.log
 

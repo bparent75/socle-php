@@ -37,13 +37,7 @@ if (!function_exists('h')) {
     if (class_exists(\BaconQrCode\Encoder\Encoder::class)) require __DIR__ . '/src/qrcode.php';
 }
 
-$reussis = 0; $echecs = [];
-function verifie(string $nom, bool $ok, string $detail = ''): void {
-    global $reussis, $echecs;
-    if ($ok) { $reussis++; echo "  ok    $nom\n"; return; }
-    $echecs[] = $nom; echo "  ÉCHEC $nom" . ($detail ? " — $detail" : '') . "\n";
-}
-function titre(string $t): void { echo "\n$t\n"; }
+require __DIR__ . '/outils/banc.php';   // verifie(), titre(), bilan()
 
 titre('Formats');
 verifie('échappement', h('<b>"x"</b>') === '&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
@@ -384,7 +378,4 @@ if (!function_exists('qr_svg')) {
     verifie('le contenu est bien encodé', qr_svg('un') !== qr_svg('deux'));
 }
 
-echo "\n" . str_repeat('-', 56) . "\n";
-$total = $reussis + count($echecs);
-if ($echecs) { echo "ÉCHEC : $reussis/$total\n"; foreach ($echecs as $e) echo "  - $e\n"; exit(1); }
-echo "Tous les contrôles sont passés : $reussis/$total.\n";
+bilan();

@@ -1,0 +1,10 @@
+{
+    "name": "socle-php-outils",
+    "private": true,
+    "description": "Harnais de vérification locale (PHP-WASM) : versions épinglées, une dérive de @php-wasm/node a déjà cassé l'exécution une fois (16 septembre 2026).",
+    "dependencies": {
+        "@php-wasm/node": "3.1.61",
+        "@php-wasm/universal": "3.1.61",
+        "php-parser": "3.7.0"
+    }
+}
