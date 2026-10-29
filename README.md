@@ -39,7 +39,7 @@ les briques standard passent par Composer :
 | QR code | `bacon/bacon-qr-code` — enveloppé par `src/qrcode.php`, voir ci-dessous |
 | PDF | `dompdf/dompdf` ou `mpdf/mpdf` |
 | Envoi de courriel | `phpmailer/phpmailer` |
-| Second facteur TOTP | `spomky-labs/otphp` |
+| Second facteur TOTP | `src/totp.php` (1.9) — soixante lignes éprouvées sur Ipesup Orientation ; `spomky-labs/otphp` ajouterait trois paquets pour le même service |
 | Tableur | `phpoffice/phpspreadsheet` |
 
 N'ajoutez ici que ce qui n'a pas d'équivalent, et dites pourquoi dans l'en-tête du fichier.
@@ -59,6 +59,7 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 | `src/journal.php` | Journal d'audit |
 | `src/qrcode.php` | `qr_svg()` : un QR code en SVG en ligne, accessible. L'encodage vient de `bacon/bacon-qr-code` |
 | `src/porte_demo.php` | Rideau par mot de passe sur un site en construction, et interdiction d'indexation |
+| `src/totp.php` | Second facteur TOTP, RFC 6238 (1.9) : secret, code à six chiffres, vérification à fenêtre ±30 s, adresse `otpauth://` à donner à `qr_svg()`. Fonctions gardées par `function_exists` tant qu'Ipesup Orientation porte sa propre copie |
 | `sql/` | Les tables dont ces briques ont besoin, en SQLite et en MySQL |
 
 Chaque fichier indique en tête ce qu'il attend de l'application hôte (fonction `bd()`,

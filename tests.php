@@ -30,7 +30,7 @@ foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as 
     if (is_file($candidat)) { require $candidat; break; }
 }
 if (!function_exists('h')) {
-    foreach (['formats', 'securite', 'courriel', 'rebonds', 'journal', 'porte_demo'] as $brique) {
+    foreach (['formats', 'securite', 'courriel', 'rebonds', 'journal', 'porte_demo', 'totp'] as $brique) {
         require __DIR__ . "/src/$brique.php";
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
@@ -329,6 +329,35 @@ verifie('site indexable par défaut', site_indexable());
 define('MOT_DE_PASSE_DEMO', 'secret');
 verifie('verrouillée avec la constante', demonstration_verrouillee());
 verifie('site non indexable quand verrouillé', !site_indexable());
+
+titre('Second facteur TOTP');
+// Vecteurs de la RFC 6238 (annexe B), réduits à six chiffres : secret ASCII
+// « 12345678901234567890 », soit GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ en base32.
+$cle_rfc = 'GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ';
+verifie('base32 décodé', base32_decoder($cle_rfc) === '12345678901234567890');
+verifie('base32 : espaces et minuscules tolérés',
+        base32_decoder('gezd gnbv gy3t qojq GEZD GNBV GY3T QOJQ') === '12345678901234567890');
+verifie('vecteur RFC à T=59', totp_code($cle_rfc, intdiv(59, 30)) === '287082');
+verifie('vecteur RFC à T=1111111109', totp_code($cle_rfc, intdiv(1111111109, 30)) === '081804');
+verifie('vecteur RFC à T=1234567890', totp_code($cle_rfc, intdiv(1234567890, 30)) === '005924');
+verifie('vecteur RFC à T=2000000000', totp_code($cle_rfc, intdiv(2000000000, 30)) === '279037');
+// Le pas courant et le suivant restent acceptés même si l'horloge franchit un pas
+// pendant le test ; le pas - 2, lui, n'est accepté ni avant ni après ce franchissement.
+$pas = intdiv(time(), 30);
+verifie('code du moment accepté', totp_verifier($cle_rfc, totp_code($cle_rfc, $pas)));
+verifie('décalage d\'horloge d\'un pas toléré', totp_verifier($cle_rfc, totp_code($cle_rfc, $pas + 1)));
+verifie('code périmé refusé', !totp_verifier($cle_rfc, totp_code($cle_rfc, $pas - 2)));
+verifie('code saisi avec des espaces accepté',
+        totp_verifier($cle_rfc, chunk_split(totp_code($cle_rfc, $pas), 3, ' ')));
+verifie('code mal formé refusé', !totp_verifier($cle_rfc, '12345') && !totp_verifier($cle_rfc, 'abcdef'));
+$s1 = totp_secret_nouveau();
+verifie('secret neuf : 32 caractères base32', preg_match('/^[A-Z2-7]{32}$/', $s1) === 1);
+verifie('deux secrets neufs diffèrent', $s1 !== totp_secret_nouveau());
+$uri_totp = totp_uri('qui@example.invalid', $s1, 'Essai Socle');
+verifie('adresse otpauth complète',
+        str_starts_with($uri_totp, 'otpauth://totp/Essai%20Socle%3Aqui%40example.invalid?')
+        && str_contains($uri_totp, $s1) && str_contains($uri_totp, 'issuer=Essai%20Socle')
+        && str_contains($uri_totp, 'digits=6') && str_contains($uri_totp, 'period=30'));
 
 titre('QR code');
 if (!function_exists('qr_svg')) {
