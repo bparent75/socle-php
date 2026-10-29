@@ -1,0 +1,26 @@
+# socle-php — les 4 projets qui en dépendent tournent sur des PHP différents :
+# chaque version supportée est donc vérifiée à chaque poussée.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    name: PHP ${{ matrix.php }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: mbstring, pdo_sqlite
+          coverage: none
+      # Sans Composer, les contrôles du QR code seraient ignorés : on installe.
+      - run: composer install --no-interaction --no-progress
+      - run: php tests.php

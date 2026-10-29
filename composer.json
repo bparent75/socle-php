@@ -2,11 +2,15 @@
     "name": "bparent75/socle-php",
     "description": "Briques PHP réutilisables : formats français, sécurité, second facteur TOTP, file de courriels et avis de non-remise, journal d'audit, QR code.",
     "type": "library",
-    "license": "proprietary",
+    "license": "MIT",
     "require": {
         "php": ">=8.2",
         "ext-mbstring": "*",
         "bacon/bacon-qr-code": "^3.0"
+    },
+    "suggest": {
+        "phpmailer/phpmailer": "Envoi par SMTP signé (file de courriels) ; sans lui, repli sur mail() en texte seul",
+        "ext-imap": "Lecture des avis de non-remise (src/rebonds.php)"
     },
     "autoload": {
         "files": [
