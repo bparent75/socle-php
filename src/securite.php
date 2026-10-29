@@ -41,15 +41,21 @@ if (!function_exists('demarrer_session')) {
      * $nom est facultatif : à défaut, la constante NOM_SESSION du projet est utilisée.
      * Cela évite d'avoir à passer le nom à chaque appel, et donc de l'oublier quelque part —
      * une session ouverte sous deux noms différents déconnecte l'utilisateur au hasard.
+     *
+     * $chemin borne le cookie à un sous-chemin (« /calendrier/ » pour un site installé
+     * dans un sous-répertoire) ; à défaut, la constante CHEMIN_SESSION, sinon « / ».
+     * La constante vaut aussi pour les appels internes du socle (CSRF, porte de
+     * démonstration), qui ne passent pas d'arguments.
      */
-    function demarrer_session(?string $nom = null): void
+    function demarrer_session(?string $nom = null, ?string $chemin = null): void
     {
         if (PHP_SAPI === 'cli' || headers_sent()) return;
         if (session_status() === PHP_SESSION_ACTIVE) return;
         $nom ??= defined('NOM_SESSION') ? (string)NOM_SESSION : 'socle_session';
+        $chemin ??= defined('CHEMIN_SESSION') ? (string)CHEMIN_SESSION : '/';
         session_set_cookie_params([
             'lifetime' => 0,
-            'path'     => '/',
+            'path'     => $chemin,
             'secure'   => requete_https(),
             'httponly' => true,
             'samesite' => 'Lax',
