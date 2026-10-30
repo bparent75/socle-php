@@ -12,7 +12,11 @@
         "phpmailer/phpmailer": "Envoi par SMTP signé (file de courriels) ; sans lui, repli sur mail() en texte seul",
         "ext-imap": "Lecture des avis de non-remise (src/rebonds.php)",
         "ext-gd": "Image téléversée : contrôle, réencodage et redimensionnement (src/image.php)",
-        "ext-exif": "Image téléversée : redressement des photos de téléphone selon leur drapeau d'orientation"
+        "ext-exif": "Image téléversée : redressement des photos de téléphone selon leur drapeau d'orientation",
+        "web-auth/webauthn-lib": "Clés d'accès (passkeys) : src/webauthn.php, inactive sans lui (~5.3)"
+    },
+    "require-dev": {
+        "web-auth/webauthn-lib": "~5.3.9"
     },
     "autoload": {
         "files": [
@@ -36,7 +40,8 @@
             "src/authentification.php",
             "src/mot_de_passe.php",
             "src/session_durable.php",
-            "src/codes_secours.php"
+            "src/codes_secours.php",
+            "src/webauthn.php"
         ]
     }
 }

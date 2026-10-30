@@ -198,8 +198,9 @@ if (!function_exists('auth_en_attente')) {
 
 if (!function_exists('auth_second_facteur')) {
     /**
-     * Second facteur de la connexion en attente : $mode « totp » (code de l'application) ou
-     * « secours » (code de secours). Rend « connecte », « refus », « limite » ou « expire »
+     * Second facteur de la connexion en attente : $mode « totp » (code de l'application),
+     * « secours » (code de secours) ou « cle » ($code : la réponse JSON du navigateur, après
+     * cle_options_connexion($id)). Rend « connecte », « refus », « limite » ou « expire »
      * (plus de connexion en attente : repasser par le premier facteur).
      */
     function auth_second_facteur(string $mode, string $code): string
@@ -209,7 +210,7 @@ if (!function_exists('auth_second_facteur')) {
         $id = (int)$attente['id'];
         $cle = 'second-facteur-' . $id;
         if (echecs_depasses($cle, 5, 900)) return 'limite';
-        $ok = $mode === 'secours' ? code_secours_utiliser($id, $code) : totp_verifier_compte($id, $code);
+        $ok = auth_facteur_verifier($id, $mode, $code);
         if (!$ok) {
             if (echec_noter($cle) === 5) {
                 auth_aviser($id, 'Codes de connexion refusés',
@@ -219,8 +220,21 @@ if (!function_exists('auth_second_facteur')) {
             journaliser('echec_second_facteur', 'utilisateur', $id);
             return 'refus';
         }
-        auth_terminer($id, $attente['facteur'] . '+' . ($mode === 'secours' ? 'secours' : 'totp'), (bool)$attente['durable']);
+        auth_terminer($id, $attente['facteur'] . '+' . $mode, (bool)$attente['durable']);
         return 'connecte';
+    }
+}
+
+if (!function_exists('auth_facteur_verifier')) {
+    /** Un second facteur du compte : « totp », « secours » ou « cle » (si les clés d'accès sont installées). */
+    function auth_facteur_verifier(int $id, string $mode, string $valeur): bool
+    {
+        return match ($mode) {
+            'totp'    => totp_verifier_compte($id, $valeur),
+            'secours' => code_secours_utiliser($id, $valeur),
+            'cle'     => function_exists('webauthn_disponible') && webauthn_disponible() && cle_verifier($valeur, $id) === $id,
+            default   => false,
+        };
     }
 }
 
@@ -411,7 +425,7 @@ if (!function_exists('exiger_verification_recente')) {
 
 if (!function_exists('auth_verifier')) {
     /**
-     * Vérification renforcée de la personne connectée : $mode « totp », « secours », ou « mdp »
+     * Vérification renforcée de la personne connectée : $mode « totp », « secours », « cle », ou « mdp »
      * — ce dernier seulement pour un compte SANS second facteur (une famille sur ses propres
      * données) : qui en a un doit le passer. Rend « ok », « refus », « limite » ou « non_connecte ».
      */
@@ -422,12 +436,8 @@ if (!function_exists('auth_verifier')) {
         if ($id <= 0) return 'non_connecte';
         $cle = 'verification-' . $id;
         if (echecs_depasses($cle, 5, 900)) return 'limite';
-        $ok = match ($mode) {
-            'totp'    => totp_verifier_compte($id, $valeur),
-            'secours' => code_secours_utiliser($id, $valeur),
-            'mdp'     => !auth_a_second_facteur($id) && mdp_verifier($id, $valeur),
-            default   => false,
-        };
+        $ok = $mode === 'mdp' ? !auth_a_second_facteur($id) && mdp_verifier($id, $valeur)
+                              : auth_facteur_verifier($id, $mode, $valeur);
         if (!$ok) {
             echec_noter($cle);
             journaliser('echec_verification', 'utilisateur', $id, $mode, $id);

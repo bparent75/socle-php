@@ -37,6 +37,7 @@ if (!function_exists('h')) {
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
     if (class_exists(\BaconQrCode\Encoder\Encoder::class)) require __DIR__ . '/src/qrcode.php';
+    require __DIR__ . '/src/webauthn.php';   // inactive sans web-auth/webauthn-lib (webauthn_disponible())
 }
 
 require __DIR__ . '/outils/banc.php';   // verifie(), titre(), bilan()
@@ -978,6 +979,120 @@ if (!function_exists('openssl_encrypt')) {
     auth_terminer($c2, 'mdp', true);
     auth_deconnecter();
     verifie('déconnexion : session vidée, appareil oublié', $_SESSION === [] && count(durables_lister($c2)) === 0);
+}
+
+titre('Clés d’accès, WebAuthn (2.2)');
+if (!function_exists('webauthn_disponible') || !webauthn_disponible() || !function_exists('openssl_pkey_new')) {
+    echo "  (ignoré : web-auth/webauthn-lib n'est pas installé — lancer composer install)\n";
+} else {
+    // Authentificateur logiciel : une clé EC P-256 d'OpenSSL et un encodeur CBOR minimal, pour
+    // fabriquer les réponses qu'un téléphone ou un ordinateur renverrait au navigateur.
+    $cbor_tete = fn (int $majeur, int $n): string => match (true) {
+        $n < 24    => chr($majeur << 5 | $n),
+        $n < 256   => chr($majeur << 5 | 24) . chr($n),
+        $n < 65536 => chr($majeur << 5 | 25) . pack('n', $n),
+        default    => chr($majeur << 5 | 26) . pack('N', $n),
+    };
+    $cbor = function (mixed $v) use (&$cbor, $cbor_tete): string {
+        if (is_int($v)) return $v >= 0 ? $cbor_tete(0, $v) : $cbor_tete(1, -1 - $v);
+        if (is_string($v)) return $cbor_tete(3, strlen($v)) . $v;                      // texte
+        if (is_object($v)) return $cbor_tete(2, strlen($v->octets)) . $v->octets;      // octets
+        $s = $cbor_tete(5, count($v));
+        foreach ($v as $cle => $valeur) $s .= $cbor($cle) . $cbor($valeur);
+        return $s;
+    };
+    $octets = fn (string $b): object => (object)['octets' => $b];
+    $origine = 'https://exemple.invalid';
+    $rp_hash = hash('sha256', 'exemple.invalid', true);
+    $appareil = function () {
+        $cle = openssl_pkey_new(['private_key_type' => OPENSSL_KEYTYPE_EC, 'curve_name' => 'prime256v1']);
+        $ec = openssl_pkey_get_details($cle)['ec'];
+        return ['privee' => $cle, 'x' => str_pad($ec['x'], 32, "\0", STR_PAD_LEFT),
+                'y' => str_pad($ec['y'], 32, "\0", STR_PAD_LEFT), 'id' => random_bytes(16), 'compteur' => 0];
+    };
+    $creer = function (array $app, string $options_json, string $origine_vue) use ($cbor, $octets, $rp_hash): string {
+        $o = json_decode($options_json, true);
+        $client = json_encode(['type' => 'webauthn.create', 'challenge' => $o['challenge'], 'origin' => $origine_vue,
+                               'crossOrigin' => false], JSON_UNESCAPED_SLASHES);
+        $cose = [1 => 2, 3 => -7, -1 => 1, -2 => $octets($app['x']), -3 => $octets($app['y'])];
+        // Drapeaux : présence (UP), vérification (UV), clé synchronisable et synchronisée (BE, BS), données de clé (AT).
+        $auth = $rp_hash . chr(0x01 | 0x04 | 0x08 | 0x10 | 0x40) . pack('N', 0) . str_repeat("\0", 16)
+              . pack('n', strlen($app['id'])) . $app['id'] . $cbor($cose);
+        $attestation = $cbor(['fmt' => 'none', 'attStmt' => [], 'authData' => $octets($auth)]);
+        return json_encode(['id' => b64url($app['id']), 'rawId' => b64url($app['id']), 'type' => 'public-key',
+            'response' => ['clientDataJSON' => b64url($client), 'attestationObject' => b64url($attestation),
+                           'transports' => ['internal']], 'clientExtensionResults' => new stdClass()]);
+    };
+    $signer = function (array &$app, string $options_json, string $poignee, $cle_de_signature = null) use ($rp_hash, $origine): string {
+        $o = json_decode($options_json, true);
+        $client = json_encode(['type' => 'webauthn.get', 'challenge' => $o['challenge'], 'origin' => $origine,
+                               'crossOrigin' => false], JSON_UNESCAPED_SLASHES);
+        $auth = $rp_hash . chr(0x01 | 0x04 | 0x08 | 0x10) . pack('N', ++$app['compteur']);
+        openssl_sign($auth . hash('sha256', $client, true), $signature, $cle_de_signature ?? $app['privee'], OPENSSL_ALGO_SHA256);
+        return json_encode(['id' => b64url($app['id']), 'rawId' => b64url($app['id']), 'type' => 'public-key',
+            'response' => ['clientDataJSON' => b64url($client), 'authenticatorData' => b64url($auth),
+                           'signature' => b64url($signature), 'userHandle' => $poignee],
+            'clientExtensionResults' => new stdClass()]);
+    };
+
+    $k = $creer_compte('cle@example.org', 'admin');
+    $nouvelle_requete();
+    auth_terminer($k, 'lien');
+    $telephone = $appareil();
+    $o_creation = cle_options_creation($k, 'cle@example.org');
+    $oc = json_decode($o_creation, true);
+    verifie('options d’enregistrement : hôte du site, clé découvrable, vérification exigée, attestation none',
+            $oc['rp']['id'] === 'exemple.invalid' && $oc['authenticatorSelection']['residentKey'] === 'required'
+            && $oc['authenticatorSelection']['userVerification'] === 'required' && $oc['attestation'] === 'none'
+            && strlen((string)base64_decode(strtr($oc['challenge'], '-_', '+/'))) === 32);
+    $poignee = $oc['user']['id'];
+    verifie('poignée de compte aléatoire, ni l’identifiant ni l’adresse',
+            strlen((string)base64_decode(strtr($poignee, '-_', '+/'))) === 32 && !str_contains($o_creation, '"id":"' . $k . '"'));
+    $reponse = $creer($telephone, $o_creation, $origine);
+    $codes_cle = cle_enregistrer($k, $reponse, 'iPhone d’essai');
+    verifie('enregistrement vérifié : premier second facteur, dix codes de secours', is_array($codes_cle) && count($codes_cle) === 10
+            && auth_a_second_facteur($k));
+    verifie('… clé synchronisée notée, nommée', ($l = cles_lister($k)) && count($l) === 1 && (int)$l[0]['sauvegardee'] === 1
+            && $l[0]['nom'] === 'iPhone d’essai');
+    verifie('même réponse rejouée : refusée (défi consommé)', cle_enregistrer($k, $reponse, 'bis') === null);
+    $autre = $appareil();
+    verifie('origine d’un autre site : refusée',
+            cle_enregistrer($k, $creer($autre, cle_options_creation($k, 'cle@example.org'), 'https://piege.example'), 'x') === null);
+    verifie('une clé déjà enregistrée est exclue des nouvelles options',
+            str_contains(cle_options_creation($k, 'cle@example.org'), b64url($telephone['id'])));
+    unset($_SESSION['webauthn_creation']);
+
+    $nouvelle_requete();
+    $o_connexion = cle_options_connexion();
+    verifie('connexion sans adresse : aucune clé imposée, vérification exigée',
+            !str_contains($o_connexion, 'allowCredentials') || str_contains($o_connexion, '"allowCredentials":[]'));
+    $assertion = $signer($telephone, $o_connexion, $poignee);
+    verifie('connexion par clé seule : connecté, vaut les deux facteurs',
+            auth_cle_acces($assertion) === 'connecte' && ($_SESSION['utilisateur_id'] ?? 0) === $k
+            && $_SESSION['auth_facteurs'] === 'cle' && auth_verification_recente() && auth_etat_2fa($k, 'admin') === 'ok');
+    verifie('… compteur et date d’usage enregistrés', cles_lister($k)[0]['derniere_utilisation'] !== null
+            && str_contains((string)bd()->query("SELECT source FROM auth_cle_acces WHERE compte_id = $k")->fetchColumn(), '"counter":1'));
+    $nouvelle_requete();
+    verifie('même signature rejouée : refusée', auth_cle_acces($assertion) === 'refus' && !isset($_SESSION['utilisateur_id']));
+    $nouvelle_requete();
+    verifie('signature d’une autre clé : refusée',
+            auth_cle_acces($signer($telephone, cle_options_connexion(), $poignee, $autre['privee'])) === 'refus');
+    $nouvelle_requete();
+    verifie('clé inconnue du site : refusée', auth_cle_acces($signer($autre, cle_options_connexion(), $poignee)) === 'refus');
+
+    $nouvelle_requete();
+    auth_premier_facteur($k, 'mdp');
+    $o_second = cle_options_connexion($k);
+    verifie('second facteur : seules les clés du compte sont proposées', str_contains($o_second, b64url($telephone['id'])));
+    verifie('second facteur par clé : connecté, mdp+cle',
+            auth_second_facteur('cle', $signer($telephone, $o_second, $poignee)) === 'connecte' && $_SESSION['auth_facteurs'] === 'mdp+cle');
+    $_SESSION['auth_verifie_le'] = time() - 901;
+    verifie('vérification renforcée par clé', auth_verifier('cle', $signer($telephone, cle_options_connexion($k), $poignee)) === 'ok'
+            && auth_verification_recente());
+    $ligne_cle = (int)cles_lister($k)[0]['id'];
+    verifie('dernier second facteur d’un compte tenu : retrait refusé', !cle_retirer($ligne_cle, $k, true) && count(cles_lister($k)) === 1);
+    verifie('compte non tenu : retrait accepté', cle_retirer($ligne_cle, $k, false) && cles_lister($k) === []
+            && !auth_a_second_facteur($k));
 }
 
 titre('QR code');

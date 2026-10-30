@@ -74,6 +74,8 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 | `src/mot_de_passe.php` | Mot de passe (2.2) : règles (12 caractères, aucune règle de composition, fuites connues), Argon2id, vérification à durée constante |
 | `src/session_durable.php` | « Rester connecté 30 jours » (2.2) : un cookie par appareil, sélecteur / validateur, révocable |
 | `src/codes_secours.php` | Codes de secours du second facteur (2.2) : dix codes à usage unique, hachés |
+| `src/webauthn.php` | Clés d'accès / passkeys (2.2) : enregistrement, connexion sans adresse, second facteur, vérification renforcée. Active seulement si le projet installe `web-auth/webauthn-lib` (~5.3) |
+| `actifs/webauthn.js` | Côté navigateur des clés d'accès (2.2), sans dépendance : à copier dans les actifs du projet |
 | `sql/` | Les tables dont ces briques ont besoin, en SQLite et en MySQL |
 
 Chaque fichier indique en tête ce qu'il attend de l'application hôte (fonction `bd()`,
@@ -182,8 +184,8 @@ implémentation : toutes ces fonctions sont gardées par `function_exists`.
 ## Authentification : mot de passe, second facteur, rester connecté (2.2)
 
 La cible commune des projets (spécification d'octobre 2026) : **première connexion par
-lien**, puis **mot de passe** ; **second facteur** (application TOTP, codes de secours ;
-clés d'accès à venir) obligatoire pour les rôles déclarés ; **« rester connecté 30 jours »** ;
+lien**, puis **mot de passe** ; **second facteur** (application TOTP ou clé d'accès, et
+codes de secours) obligatoire pour les rôles déclarés ; **« rester connecté 30 jours »** ;
 **vérification récente** (15 min) sur les pages très sensibles. Règles figées :
 
 - `$_SESSION['utilisateur_id']` n'est posé qu'une fois l'authentification **complète** ;
@@ -208,6 +210,7 @@ tables `auth_*` (voir `sql/`).
 | `AUTH_INACTIVITE`, `AUTH_DUREE_MAX`, `AUTH_VERIFICATION_RECENTE` | 2 h, 12 h, 15 min à défaut (secondes) |
 | `DUREE_SESSION_DURABLE`, `NOM_COOKIE_DURABLE` | 30 jours ; `NOM_SESSION . '_durable'` (préfixé `__Host-` en HTTPS) |
 | `AUTH_VERIFIER_FUITES` | `false` pour ne pas interroger Have I Been Pwned (tests, poste sans réseau) |
+| `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINES` | Hôte des clés d'accès et origines admises (l'hôte et l'origine d'`URL_BASE` à défaut). Une clé est liée à l'hôte : changer de domaine les perd |
 
 Connexion type :
 
@@ -231,6 +234,16 @@ exiger_2fa_si_obligatoire($u['id'], $u['role']);
 // En tête d'une page très sensible (santé, pièces, finances, exports, comptes) :
 exiger_verification_recente();       // la page de vérification appelle auth_verifier()
 ```
+
+Clés d'accès (`composer require "web-auth/webauthn-lib:~5.3"`, le moteur de
+`laravel/passkeys`) : la page envoie au navigateur `cle_options_creation($id, $courriel)`
+ou `cle_options_connexion($id ?)`, `actifs/webauthn.js` appelle l'appareil
+(`socleCle.creer()`, `socleCle.obtenir()`, `socleCle.autoremplir()` pour le champ adresse
+marqué `autocomplete="username webauthn"`), et la réponse revient en POST à
+`cle_enregistrer()`, `auth_cle_acces()` (connexion complète : une clé vaut les deux
+facteurs), `auth_second_facteur('cle', …)` ou `auth_verifier('cle', …)`. Les tests les
+vérifient avec un authentificateur logiciel (clé EC P-256 d'OpenSSL) quand la bibliothèque
+est installée (`require-dev`) ; sans elle, la section est ignorée.
 
 Enrôlement : montrer `qr_svg(totp_uri($courriel, $secret, MARQUE_NOM))` avec
 `$secret = totp_secret_nouveau()` gardé en session, puis `totp_enroler($id, $secret, $code)`
