@@ -14,8 +14,10 @@
  * Pourquoi ici : cette brique était réécrite dans cinq projets (inscriptions, Libris,
  * calendrier, Orientation, Tristan), avec les mêmes décisions à chaque fois — et
  * parfois sans l'une d'elles. Elles sont donc figées ici :
- *   - aucun mot de passe : un lien à usage unique, valable 30 minutes, envoyé par
- *     courriel (la boîte de la personne fait office de preuve) ;
+ *   - un lien à usage unique, valable 30 minutes, envoyé par courriel (la boîte de la
+ *     personne fait office de preuve). Depuis la 2.2, le lien sert à la première connexion
+ *     et de « mot de passe oublié » ; le mot de passe et le second facteur sont dans
+ *     authentification.php (lien_magique_utiliser() puis auth_premier_facteur()) ;
  *   - le jeton n'est JAMAIS stocké en clair : son empreinte HMAC va en base ;
  *   - la réponse est identique que l'adresse soit connue ou non (pas d'énumération
  *     des comptes) ; seule la limitation, commune à toutes, est signalée ;
@@ -162,14 +164,17 @@ if (!function_exists('lien_magique_envoyer')) {
     }
 }
 
-if (!function_exists('lien_magique_consommer')) {
+if (!function_exists('lien_magique_utiliser')) {
     /**
-     * Consomme un jeton de lien magique et ouvre la session. Rend l'utilisateur
-     * connecté, ou null (jeton inconnu, déjà servi, expiré, compte désactivé, ou trop
-     * d'essais depuis cet appareil). La consommation est atomique : deux clics
-     * simultanés sur le même lien n'ouvrent qu'une session.
+     * Consomme un jeton de lien magique SANS ouvrir la session : rend l'identifiant de
+     * l'utilisateur, ou null (jeton inconnu, déjà servi, expiré, compte désactivé, ou trop
+     * d'essais depuis cet appareil). La consommation est atomique : deux clics simultanés
+     * sur le même lien n'en valident qu'un. Pour enchaîner sur le second facteur (2.2) :
+     * auth_premier_facteur($id, 'lien', $durable) — le lien ne remplace jamais le second facteur.
+     * À appeler depuis le POST d'un bouton « Me connecter », pas à l'ouverture du lien : les
+     * antivirus de messagerie ouvrent les liens reçus et consommeraient le jeton.
      */
-    function lien_magique_consommer(string $jeton): ?array
+    function lien_magique_utiliser(string $jeton): ?int
     {
         if ($jeton === '' || !limiter('jeton-ip-' . empreinte_appelant(), 20, 900)) return null;
 
@@ -187,10 +192,23 @@ if (!function_exists('lien_magique_consommer')) {
         // Purge d'entretien : jetons expirés depuis plus d'un jour.
         bd()->prepare('DELETE FROM jeton_connexion WHERE expire_le < ?')
             ->execute([gmdate('Y-m-d\TH:i:s\Z', time() - 86400)]);
+        return (int)$ligne['utilisateur_id'];
+    }
+}
 
-        connexion_ouvrir((int)$ligne['utilisateur_id']);
+if (!function_exists('lien_magique_consommer')) {
+    /**
+     * Consomme un jeton de lien magique et ouvre la session, sans second facteur (2.0).
+     * Rend l'utilisateur connecté, ou null. Un projet qui adopte le second facteur passe
+     * par lien_magique_utiliser() puis auth_premier_facteur().
+     */
+    function lien_magique_consommer(string $jeton): ?array
+    {
+        $id = lien_magique_utiliser($jeton);
+        if ($id === null) return null;
+        connexion_ouvrir($id);
         $u = bd()->prepare('SELECT * FROM utilisateur WHERE id = ?');
-        $u->execute([(int)$ligne['utilisateur_id']]);
+        $u->execute([$id]);
         return $u->fetch() ?: null;
     }
 }

@@ -123,6 +123,32 @@ if (!function_exists('limiter')) {
     }
 }
 
+if (!function_exists('echecs_depasses')) {
+    /**
+     * Vrai si l'on a déjà noté $max échecs sous cette clé depuis $secondes. À la différence
+     * de limiter(), rien n'est enregistré ici : pour un mot de passe ou un code, seuls les
+     * ÉCHECS comptent (echec_noter()), une connexion réussie ne consomme pas le quota.
+     */
+    function echecs_depasses(string $cle, int $max, int $secondes): bool
+    {
+        $depuis = (new DateTimeImmutable("-$secondes seconds", new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z');
+        $req = bd()->prepare('SELECT COUNT(*) FROM tentative WHERE cle = ? AND cree_le >= ?');
+        $req->execute([$cle, $depuis]);
+        return (int)$req->fetchColumn() >= $max;
+    }
+}
+
+if (!function_exists('echec_noter')) {
+    /** Note un échec sous cette clé (table tentative, purgée après un jour par limiter()) ; rend le nombre d'échecs sur 24 h. */
+    function echec_noter(string $cle): int
+    {
+        bd()->prepare('INSERT INTO tentative (cle, cree_le) VALUES (?, ?)')->execute([$cle, maintenant()]);
+        $req = bd()->prepare('SELECT COUNT(*) FROM tentative WHERE cle = ? AND cree_le >= ?');
+        $req->execute([$cle, (new DateTimeImmutable('-1 day', new DateTimeZone('UTC')))->format('Y-m-d\TH:i:s\Z')]);
+        return (int)$req->fetchColumn();
+    }
+}
+
 if (!function_exists('empreinte_appelant')) {
     /** Empreinte stable de l'appelant, pour la limitation. Jamais l'adresse IP en clair. */
     function empreinte_appelant(): string

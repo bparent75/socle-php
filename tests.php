@@ -31,7 +31,8 @@ foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as 
 }
 if (!function_exists('h')) {
     foreach (['formats', 'securite', 'bd', 'parametres', 'connexion', 'courriel', 'rebonds',
-              'journal', 'cron', 'flash', 'validation', 'image', 'csv', 'ical', 'porte_demo', 'totp'] as $brique) {
+              'journal', 'cron', 'flash', 'validation', 'image', 'csv', 'ical', 'porte_demo', 'totp',
+              'authentification', 'mot_de_passe', 'session_durable', 'codes_secours'] as $brique) {
         require __DIR__ . "/src/$brique.php";
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
@@ -757,6 +758,227 @@ verifie('adresse otpauth complète',
         str_starts_with($uri_totp, 'otpauth://totp/Essai%20Socle%3Aqui%40example.invalid?')
         && str_contains($uri_totp, $s1) && str_contains($uri_totp, 'issuer=Essai%20Socle')
         && str_contains($uri_totp, 'digits=6') && str_contains($uri_totp, 'period=30'));
+
+// ---------------------------------------------------------------------------
+// Authentification (2.2) : mot de passe, second facteur du compte, rester connecté,
+// second facteur obligatoire, vérification renforcée. Comptes : la table utilisateur
+// du socle (AUTH_TABLE_COMPTES par défaut). Aucun appel réseau (AUTH_VERIFIER_FUITES).
+// ---------------------------------------------------------------------------
+define('CLE_CHIFFREMENT', bin2hex(random_bytes(32)));
+const AUTH_VERIFIER_FUITES = false;
+const AUTH_ESSAI = true;   // auth_session_controler() agit aussi en ligne de commande
+$_SESSION = [];
+$creer_compte = function (string $courriel, string $role = 'equipe'): int {
+    bd()->prepare('INSERT INTO utilisateur (courriel, role, actif, cree_le) VALUES (?, ?, 1, ?)')
+        ->execute([$courriel, $role, maintenant()]);
+    return (int)bd()->lastInsertId();
+};
+$avis = fn (string $sujet): int => (int)bd()->query('SELECT COUNT(*) FROM notification WHERE sujet = '
+                                                    . bd()->quote($sujet))->fetchColumn();
+$nouvelle_requete = function (): void { $_SESSION = []; };
+
+titre('Mot de passe (2.2)');
+verifie('trop court refusé', mdp_erreur('court') === 'Le mot de passe doit compter au moins 12 caractères.');
+verifie('trop long refusé', mdp_erreur(str_repeat('ab1-', 33)) !== null);
+verifie('suite refusée', mdp_erreur('abcdefghijklmn') !== null && mdp_erreur('123456789012') !== null
+        && mdp_erreur('azertyuiopqs') !== null && mdp_erreur('nmlkjihgfedcba') !== null);
+verifie('répétition refusée', mdp_erreur('aaaaaaaaaaaaaaab') !== null);
+verifie('adresse reprise refusée', mdp_erreur('jeanne.dupont-1980', 'Jeanne.Dupont-1980@example.org') !== null);
+verifie('phrase de passe acceptée, sans règle de composition',
+        mdp_erreur('le chat dort sur la valise') === null && mdp_erreur('Ma 🦊 file à la gare de Lyon') === null);
+verifie('fuites : suffixe connu reconnu, lignes de bourrage ignorées',
+        mdp_fuites_contient("0018A45C4D1DEF81644B54AB7F969B88D65:3\r\n00D4F6E8FA6EECAD2A3AA415EEC418D38EC:0\n",
+                            '0018a45c4d1def81644b54ab7f969b88d65')
+        && !mdp_fuites_contient("00D4F6E8FA6EECAD2A3AA415EEC418D38EC:0\n", '00D4F6E8FA6EECAD2A3AA415EEC418D38EC'));
+$c1 = $creer_compte('mdp@example.org');
+$mdp = 'une longue phrase de passe';
+verifie('sans mot de passe : refus, sans erreur', !mdp_defini($c1) && auth_mot_de_passe('mdp@example.org', $mdp) === 'refus');
+mdp_definir($c1, $mdp);
+$empreinte = (string)bd()->query("SELECT mot_de_passe FROM auth_compte WHERE compte_id = $c1")->fetchColumn();
+verifie('empreinte en base, jamais le mot de passe', mdp_defini($c1) && $empreinte !== $mdp && password_verify($mdp, $empreinte));
+verifie('première pose : aucun avis de changement', $avis('Votre mot de passe a été changé') === 0);
+verifie('compte inconnu : faux, même chemin de calcul', !mdp_verifier(0, $mdp));
+$nouvelle_requete();
+verifie('mauvais mot de passe : refus, pas de session',
+        auth_mot_de_passe('mdp@example.org', 'pas le bon mot de passe') === 'refus' && !isset($_SESSION['utilisateur_id']));
+verifie('bon mot de passe, casse de l’adresse ignorée : connecté',
+        auth_mot_de_passe('MDP@example.org', $mdp) === 'connecte' && ($_SESSION['utilisateur_id'] ?? 0) === $c1
+        && ($_SESSION['auth_facteurs'] ?? '') === 'mdp' && !isset($_SESSION['auth_verifie_le']));
+bd()->exec("UPDATE utilisateur SET actif = 0 WHERE id = $c1");
+$nouvelle_requete();
+verifie('compte désactivé : même refus', auth_mot_de_passe('mdp@example.org', $mdp) === 'refus');
+bd()->exec("UPDATE utilisateur SET actif = 1 WHERE id = $c1");
+for ($i = 0; $i < 3; $i++) auth_mot_de_passe('mdp@example.org', 'encore faux ' . $i);
+verifie('5 échecs en 15 min : attente, même avec le bon mot de passe',
+        auth_mot_de_passe('mdp@example.org', $mdp) === 'limite');
+verifie('… une autre adresse n’est pas bloquée', auth_mot_de_passe('autre@example.org', 'x') === 'refus');
+bd()->exec("DELETE FROM tentative WHERE cle LIKE 'mdp-%'");
+mdp_definir($c1, 'un autre mot de passe assez long');
+verifie('changement : avis par courriel', $avis('Votre mot de passe a été changé') === 1);
+
+titre('Second facteur du compte (2.2)');
+if (!function_exists('openssl_encrypt')) {
+    echo "  (ignoré : extension openssl absente de ce PHP)\n";
+} else {
+    $s = totp_secret_nouveau();
+    $chiffre = totp_chiffrer($s, $c1);
+    verifie('secret chiffré, relu', str_starts_with($chiffre, 'v1:') && !str_contains($chiffre, $s)
+            && totp_dechiffrer($chiffre, $c1) === $s && totp_chiffrer($s, $c1) !== $chiffre);
+    verifie('chiffré altéré : null', totp_dechiffrer(substr($chiffre, 0, -4) . 'AAAA', $c1) === null
+            && totp_dechiffrer('x', $c1) === null);
+    verifie('chiffré recopié sur un autre compte : null', totp_dechiffrer($chiffre, $c1 + 1) === null);
+    $p = intdiv(time(), 30);
+    verifie('enrôlement : code faux refusé', totp_enroler($c1, $s, '000000') === null && !auth_a_second_facteur($c1));
+    $codes = totp_enroler($c1, $s, totp_code($s, $p - 1)) ?? [];
+    verifie('enrôlement confirmé : dix codes de secours, une fois', count($codes) === 10
+            && preg_match('/^[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/', $codes[0]) === 1 && auth_a_second_facteur($c1));
+    verifie('… secret chiffré en base',
+            !str_contains((string)bd()->query("SELECT totp_chiffre FROM auth_compte WHERE compte_id = $c1")->fetchColumn(), $s));
+    verifie('… codes de secours hachés', (int)bd()->query('SELECT COUNT(*) FROM auth_code_secours WHERE empreinte = '
+            . bd()->quote(code_secours_normaliser($codes[0])))->fetchColumn() === 0);
+    $nouvelle_requete();
+    verifie('mot de passe juste : second facteur attendu, utilisateur_id PAS posé',
+            auth_mot_de_passe('mdp@example.org', 'un autre mot de passe assez long', true) === 'second_facteur'
+            && !isset($_SESSION['utilisateur_id']) && auth_en_attente() !== null);
+    verifie('code du pas déjà servi à l’enrôlement : refusé (anti-rejeu)',
+            auth_second_facteur('totp', totp_code($s, $p - 1)) === 'refus');
+    verifie('code du moment : connecté, mdp+totp, vérification récente',
+            auth_second_facteur('totp', totp_code($s, $p)) === 'connecte' && ($_SESSION['utilisateur_id'] ?? 0) === $c1
+            && $_SESSION['auth_facteurs'] === 'mdp+totp' && auth_verification_recente());
+    $cookie_durable = $_COOKIE[durable_nom_cookie()] ?? '';
+    verifie('« rester connecté » demandé au mot de passe : appareil retenu', $cookie_durable !== '');
+    $nouvelle_requete();
+    auth_premier_facteur($c1, 'lien');
+    verifie('le lien ne remplace pas le second facteur', !isset($_SESSION['utilisateur_id']) && auth_en_attente() !== null);
+    verifie('même code rejoué : refusé', auth_second_facteur('totp', totp_code($s, $p)) === 'refus');
+    verifie('code de secours, saisi en minuscules avec espace : connecté',
+            auth_second_facteur('secours', strtolower(str_replace('-', ' ', $codes[0]))) === 'connecte'
+            && $_SESSION['auth_facteurs'] === 'lien+secours');
+    verifie('… il en reste neuf, avis envoyé', codes_secours_restants($c1) === 9 && $avis('Un code de secours a été utilisé') === 1);
+    $nouvelle_requete();
+    auth_premier_facteur($c1, 'lien');
+    verifie('un code de secours ne sert qu’une fois', auth_second_facteur('secours', $codes[0]) === 'refus');
+    lien_magique_envoyer('mdp@example.org');
+    preg_match('/jeton=([A-Za-z0-9_-]+)/', (string)bd()->query("SELECT corps FROM notification WHERE objet_type = 'connexion'
+        ORDER BY id DESC LIMIT 1")->fetchColumn(), $m);
+    $nouvelle_requete();
+    $par_lien = lien_magique_utiliser($m[1] ?? '');
+    verifie('lien du socle consommé sans ouvrir la session, puis second facteur exigé',
+            $par_lien === $c1 && !isset($_SESSION['utilisateur_id'])
+            && auth_premier_facteur($c1, 'lien') === 'second_facteur' && lien_magique_utiliser($m[1] ?? '') === null);
+    $_SESSION['auth_en_attente']['depuis'] = time() - 601;
+    verifie('attente de plus de 10 min : expirée', auth_second_facteur('totp', totp_code($s, $p + 1)) === 'expire');
+    bd()->exec("DELETE FROM tentative WHERE cle LIKE 'second-facteur-%'");
+    auth_premier_facteur($c1, 'lien');
+    for ($i = 0; $i < 5; $i++) auth_second_facteur('totp', '000000');
+    verifie('5 codes faux : attente, avis envoyé', auth_second_facteur('totp', totp_code($s, $p + 1)) === 'limite'
+            && $avis('Codes de connexion refusés') === 1);
+    bd()->exec("DELETE FROM tentative WHERE cle LIKE 'second-facteur-%'");
+
+    titre('Rester connecté (2.2)');
+    [$selecteur, $validateur] = explode(':', $cookie_durable) + ['', ''];
+    $ligne = bd()->query("SELECT * FROM auth_session_durable WHERE compte_id = $c1")->fetch();
+    verifie('une ligne par appareil, validateur haché, 30 jours, facteurs retenus',
+            $ligne['selecteur'] === $selecteur && $ligne['validateur_empreinte'] === hacher_jeton($validateur)
+            && $ligne['facteurs'] === 'mdp+totp'
+            && abs(strtotime($ligne['expire_le']) - strtotime($ligne['cree_le']) - 30 * 86400) < 5);
+    verifie('cookie préfixé __Host- en HTTPS', str_starts_with(durable_nom_cookie(), '__Host-'));
+    $nouvelle_requete();
+    $_COOKIE[durable_nom_cookie()] = $cookie_durable;
+    verifie('nouvelle visite : session reprise, sans vérification récente',
+            auth_session_controler() === $c1 && $_SESSION['auth_facteurs'] === 'mdp+totp' && !auth_verification_recente());
+    verifie('… un rôle tenu au second facteur l’accepte (ouverte avec)', auth_etat_2fa($c1, 'admin') === 'ok');
+    $_SESSION['auth_activite_le'] = time() - 7201;
+    unset($_COOKIE[durable_nom_cookie()]);
+    verifie('2 h d’inactivité sans cookie durable : session fermée',
+            auth_session_controler() === 0 && !isset($_SESSION['utilisateur_id']));
+    $_COOKIE[durable_nom_cookie()] = $selecteur . ':' . jeton_aleatoire(32);
+    verifie('validateur faux juste après le renouvellement (autre onglet) : refus discret',
+            durable_reprendre() === null && (int)bd()->query("SELECT COUNT(*) FROM auth_session_durable WHERE compte_id = $c1")->fetchColumn() === 1);
+    bd()->exec("UPDATE auth_session_durable SET derniere_rotation = '2000-01-01T00:00:00Z' WHERE compte_id = $c1");
+    $_COOKIE[durable_nom_cookie()] = $cookie_durable;
+    $repris = durable_reprendre();
+    $renouvele = $_COOKIE[durable_nom_cookie()] ?? '';
+    verifie('validateur renouvelé une fois par jour', $repris !== null && $renouvele !== $cookie_durable
+            && str_starts_with($renouvele, $selecteur . ':'));
+    bd()->exec("UPDATE auth_session_durable SET derniere_rotation = '2000-01-01T00:00:00Z' WHERE compte_id = $c1");
+    $_COOKIE[durable_nom_cookie()] = $cookie_durable;   // l'ancien, copié ailleurs
+    verifie('ancien validateur présenté plus tard : vol présumé, ligne supprimée, avis',
+            durable_reprendre() === null && $avis('Connexion durable interrompue') === 1
+            && (int)bd()->query("SELECT COUNT(*) FROM auth_session_durable WHERE compte_id = $c1")->fetchColumn() === 0);
+    durable_ouvrir($c1, 'mdp');
+    bd()->exec("UPDATE auth_session_durable SET expire_le = '2000-01-01T00:00:00Z'");
+    verifie('expirée : refusée et supprimée', durable_reprendre() === null
+            && (int)bd()->query('SELECT COUNT(*) FROM auth_session_durable')->fetchColumn() === 0);
+    durable_ouvrir($c1, 'mdp');
+    bd()->exec("UPDATE utilisateur SET actif = 0 WHERE id = $c1");
+    verifie('compte désactivé : refusée', durable_reprendre() === null);
+    bd()->exec("UPDATE utilisateur SET actif = 1 WHERE id = $c1");
+    durable_ouvrir($c1, 'mdp');
+    durable_ouvrir($c1, 'mdp');
+    verifie('deux appareils listés', count(durables_lister($c1)) === 2);
+    durable_fermer();
+    verifie('déconnexion : cet appareil seul oublié', count(durables_lister($c1)) === 1 && !isset($_COOKIE[durable_nom_cookie()]));
+    $_COOKIE[durable_nom_cookie()] = 'mal:forme';
+    verifie('cookie mal formé : ignoré et effacé', durable_reprendre() === null && !isset($_COOKIE[durable_nom_cookie()]));
+    mdp_definir($c1, 'encore un autre mot de passe');
+    verifie('changement de mot de passe : tous les appareils déconnectés', count(durables_lister($c1)) === 0);
+    verifie('appareil reconnu', durable_appareil('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile Safari/604.1')
+            === 'Safari · iOS');
+
+    titre('Second facteur obligatoire, vérification renforcée (2.2)');
+    verifie('rôles tenus : admin par défaut', auth_role_tenu_2fa('admin') && !auth_role_tenu_2fa('equipe')
+            && auth_role_tenu_2fa(['equipe', 'admin']));
+    $a1 = $creer_compte('admin2fa@example.org', 'admin');
+    $nouvelle_requete();
+    auth_terminer($a1, 'lien');
+    verifie('admin sans second facteur : délai de grâce de 7 jours, fixé au premier contrôle',
+            auth_etat_2fa($a1, 'admin') === 'grace'
+            && abs(strtotime(auth_echeance_2fa($a1)) - time() - 7 * 86400) < 5);
+    bd()->exec("UPDATE auth_compte SET echeance_2fa = '2000-01-01T00:00:00Z' WHERE compte_id = $a1");
+    verifie('délai dépassé : enrôlement exigé (la connexion, elle, reste ouverte)',
+            auth_etat_2fa($a1, 'admin') === 'enrolement' && ($_SESSION['utilisateur_id'] ?? 0) === $a1);
+    param_definir('auth_echeance_2fa', '2999-12-31T00:00:00Z');
+    $a2 = $creer_compte('admin2fa-bis@example.org', 'admin');
+    verifie('échéance commune posée au déploiement : reprise', auth_echeance_2fa($a2) === '2999-12-31T00:00:00Z');
+    verifie('rôle non tenu : rien à exiger', auth_etat_2fa($a2, 'equipe') === 'ok');
+    $nouvelle_requete();
+    auth_terminer($c1, 'lien');
+    verifie('compte avec second facteur, session ouverte sans : à redemander', auth_etat_2fa($c1, 'admin') === 'second_facteur');
+    verifie('pas de vérification récente après un lien', !auth_verification_recente());
+    verifie('vérification par mot de passe refusée à qui a un second facteur',
+            auth_verifier('mdp', 'encore un autre mot de passe') === 'refus');
+    verifie('vérification par code : accordée, 15 minutes', auth_verifier('totp', totp_code($s, intdiv(time(), 30) + 1)) === 'ok'
+            && auth_verification_recente() && !auth_verification_recente(-1) && auth_etat_2fa($c1, 'admin') === 'ok');
+    $_SESSION['auth_verifie_le'] = time() - 901;
+    verifie('au-delà de 15 minutes : à refaire', !auth_verification_recente());
+    $c2 = $creer_compte('famille@example.org', 'famille');
+    mdp_definir($c2, 'le mot de passe de la famille');
+    $nouvelle_requete();
+    auth_terminer($c2, 'lien');
+    verifie('sans second facteur : vérification par le mot de passe', auth_verifier('mdp', 'le mot de passe de la famille') === 'ok'
+            && auth_verification_recente());
+    $_SESSION['auth_retour'] = 'https://ailleurs.example/piege';
+    $r1 = auth_retour();
+    $_SESSION['auth_retour'] = '//ailleurs.example/piege';
+    $r2 = auth_retour();
+    $_SESSION['auth_retour'] = '/admin.php?page=paiements';
+    verifie('retour interne seulement (pas de redirection ouverte)', $r1 === '/' && $r2 === '/'
+            && auth_retour() === '/admin.php?page=paiements');
+    verifie('retrait du dernier second facteur refusé à un compte tenu', !totp_retirer($c1, true) && auth_a_second_facteur($c1));
+    durable_ouvrir($c1, 'mdp+totp');
+    auth_reinitialiser_2fa($c1, $a1);
+    verifie('réinitialisation : facteurs, codes et appareils retirés, avis envoyé',
+            !auth_a_second_facteur($c1) && codes_secours_restants($c1) === 0 && count(durables_lister($c1)) === 0
+            && $avis('Votre double authentification a été réinitialisée') === 1);
+    verifie('… et sans nouveau délai de grâce', auth_etat_2fa($c1, 'admin') === 'enrolement');
+    verifie('… journalisée avec l’admin qui l’a faite', (int)bd()->query("SELECT utilisateur_id FROM journal
+            WHERE action = '2fa_reinitialisee' ORDER BY id DESC LIMIT 1")->fetchColumn() === $a1);
+    $nouvelle_requete();
+    auth_terminer($c2, 'mdp', true);
+    auth_deconnecter();
+    verifie('déconnexion : session vidée, appareil oublié', $_SESSION === [] && count(durables_lister($c2)) === 0);
+}
 
 titre('QR code');
 if (!function_exists('qr_svg')) {

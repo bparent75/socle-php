@@ -95,3 +95,54 @@ CREATE TABLE IF NOT EXISTS jeton_connexion (
     cree_le        TEXT NOT NULL,
     CONSTRAINT fk_jeton_utilisateur FOREIGN KEY (utilisateur_id) REFERENCES utilisateur(id)
 );
+
+-- Authentification (2.2, src/authentification.php et voisins). Indépendant de la table des
+-- comptes du projet (AUTH_TABLE_COMPTES) : compte_id est l'identifiant d'une de ses lignes.
+CREATE TABLE IF NOT EXISTS auth_compte (
+    compte_id        INT PRIMARY KEY,
+    mot_de_passe     VARCHAR(255),        -- empreinte Argon2id (password_hash), jamais le mot de passe
+    mdp_defini_le    VARCHAR(20),
+    totp_chiffre     VARCHAR(255),        -- secret TOTP chiffré par CLE_CHIFFREMENT (« v1:… »)
+    totp_actif_le    VARCHAR(20),         -- NULL : pas d'application d'authentification
+    totp_dernier_pas BIGINT,              -- anti-rejeu : dernier pas de 30 s accepté
+    poignee_webauthn VARCHAR(64),         -- identifiant opaque du compte pour les clés d'accès
+    echeance_2fa     VARCHAR(20)          -- fin du délai de grâce d'enrôlement (rôles tenus)
+);
+
+-- Codes de secours : empreintes HMAC, usage unique.
+CREATE TABLE IF NOT EXISTS auth_code_secours (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    compte_id  INT NOT NULL,
+    empreinte  CHAR(64) NOT NULL,
+    cree_le    VARCHAR(20) NOT NULL,
+    utilise_le VARCHAR(20),
+    INDEX idx_auth_code_secours (compte_id, empreinte)
+);
+
+-- Clés d'accès (WebAuthn) : clé publique, rien de secret.
+CREATE TABLE IF NOT EXISTS auth_cle_acces (
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    compte_id            INT NOT NULL,
+    identifiant          VARCHAR(255) NOT NULL UNIQUE,  -- credential ID, base64url
+    source               TEXT NOT NULL,                 -- JSON de la source (clé publique COSE, compteur…)
+    nom                  VARCHAR(100) NOT NULL DEFAULT '',
+    sauvegardee          TINYINT(1) NOT NULL DEFAULT 0, -- clé synchronisée (iCloud, Google…)
+    cree_le              VARCHAR(20) NOT NULL,
+    derniere_utilisation VARCHAR(20),
+    INDEX idx_auth_cle_acces (compte_id)
+);
+
+-- « Rester connecté » : une ligne par appareil (sélecteur en clair, empreinte du validateur).
+CREATE TABLE IF NOT EXISTS auth_session_durable (
+    id                   INT AUTO_INCREMENT PRIMARY KEY,
+    compte_id            INT NOT NULL,
+    selecteur            VARCHAR(32) NOT NULL UNIQUE,
+    validateur_empreinte CHAR(64) NOT NULL,
+    facteurs             VARCHAR(40) NOT NULL DEFAULT '',
+    appareil             VARCHAR(60) NOT NULL DEFAULT '',
+    cree_le              VARCHAR(20) NOT NULL,
+    expire_le            VARCHAR(20) NOT NULL,
+    derniere_utilisation VARCHAR(20),
+    derniere_rotation    VARCHAR(20) NOT NULL,
+    INDEX idx_auth_session_durable (compte_id)
+);
