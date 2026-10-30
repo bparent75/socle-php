@@ -86,7 +86,7 @@ if (!function_exists('image_enregistrer')) {
         [$l, $h] = [(int) $infos[0], (int) $infos[1]];
         if ($l < 1 || $h < 1) return image_echec('Image illisible ou endommagée.');
         if ($l * $h > $o['max_pixels']) {
-            return image_echec('Image trop grande (' . nombre_fr($o['max_pixels'] / 1e6, 0) . ' millions de pixels au plus).');
+            return image_echec('Image trop grande (' . nombre_fr((float) $o['max_pixels'], 0) . ' pixels au plus).');
         }
 
         $im = @imagecreatefromstring((string) file_get_contents($source));

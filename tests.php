@@ -45,10 +45,19 @@ verifie('échappement', h('<b>"x"</b>') === '&lt;b&gt;&quot;x&quot;&lt;/b&gt;');
 verifie('texte en paragraphes', str_contains(texte("un\n\ndeux"), '<p>un</p><p>deux</p>'));
 verifie('date complète', date_fr('2026-09-21T12:30:00Z', 'complet', new DateTimeZone('Europe/Paris'))
         === 'lundi 21 septembre 2026 à 14h30');
-verifie('heure ronde sans minutes', date_fr('2026-09-21T12:00:00Z', 'heure', new DateTimeZone('Europe/Paris')) === '14h');
+verifie('heure pile avec ses minutes (« 14h00 », décision 4.4)',
+        date_fr('2026-09-21T12:00:00Z', 'heure', new DateTimeZone('Europe/Paris')) === '14h00'
+        && date_fr('2026-09-21T07:05:00Z') === 'lundi 21 septembre 2026 à 9h05');
+verifie('heure d’horaire : « 19h00 », « 9h30 », colonne TIME acceptée',
+        heure_fr('19:00') === '19h00' && heure_fr('09:30') === '9h30' && heure_fr('18:45:00') === '18h45'
+        && heure_fr('0:00') === '0h00');
+verifie('heure illisible : vide', heure_fr(null) === '' && heure_fr('') === '' && heure_fr('25:00') === ''
+        && heure_fr('19h') === '');
 verifie('date de calendrier', date_simple_fr('2026-01-05') === '5 janvier 2026');
 verifie('montant', euros(108000) === '1 080 €' && euros(30050) === '300,50 €');
 verifie('montant nul', euros(null) === 'Sur devis');
+verifie('montant négatif (avoir, remboursement)', euros(-1050) === '-10,50 €' && euros(-50) === '-0,50 €'
+        && euros(-200000) === '-2 000 €');
 verifie('adresse sans apostrophe parasite', slug('Choisir ses spécialités au lycée') === 'choisir-ses-specialites-au-lycee');
 verifie('apostrophe typographique', slug('Carnet d’exploration') === 'carnet-d-exploration');
 verifie('majuscule accentuée', slug('À quoi bon') === 'a-quoi-bon');
@@ -425,6 +434,7 @@ fclose($flux);
 titre('Formats complémentaires');
 verifie('nombre décimal à la française', nombre_fr(3.5) === '3,5' && nombre_fr(2.0) === '2'
     && nombre_fr(1234.56) === '1 234,56' && nombre_fr(1250.0) === '1 250');
+verifie('sans décimales, les zéros de la partie entière restent', nombre_fr(40, 0) === '40' && nombre_fr(1000.4, 0) === '1 000');
 verifie('accord du mot au nombre', accorder(1, 'atelier') === '1 atelier' && accorder(3, 'atelier') === '3 ateliers'
     && accorder(2, 'bac blanc', 'bacs blancs') === '2 bacs blancs');
 verifie('initiales des deux premiers mots', initiales('Léa Dupont') === 'LD' && initiales('élise') === 'É'
@@ -491,7 +501,7 @@ verifie('silence : une alerte mise en file', cron_surveiller('cron', 3600) && $a
 $n = bd()->query("SELECT * FROM notification WHERE objet_type = 'cron_alerte'")->fetch();
 verifie('alerte adressée au contact, datée en français',
     $n['destinataire'] === 'contact@example.invalid' && str_contains($n['sujet'], 'Tâche planifiée arrêtée')
-    && str_contains($n['corps'], 'samedi 10 janvier 2026 à 9h'));
+    && str_contains($n['corps'], 'samedi 10 janvier 2026 à 9h00'));
 verifie('une seule alerte par épisode de silence', !cron_surveiller('cron', 3600) && $alertes() === 1);
 param_definir('cron_dernier_passage', '2026-02-01T08:00:00Z');   // la tâche a repris, puis s'est tue de nouveau
 verifie('nouvel épisode : nouvelle alerte', cron_surveiller('cron', 3600) && $alertes() === 2);
@@ -628,8 +638,8 @@ if (!function_exists('imagecreatetruecolor')) {
         && !image_enregistrer($svg, $dossier_img)['ok']);
     verifie('poids maximal', image_enregistrer($source_img(300, 300, 'png'), $dossier_img, ['max_octets' => 100])['erreur']
         === 'Fichier trop lourd (100 o au plus).');
-    verifie('taille en pixels bornée avant décodage', str_starts_with((string)image_enregistrer($source_img(100, 100, 'png'), $dossier_img,
-        ['max_pixels' => 5000])['erreur'], 'Image trop grande'));
+    verifie('taille en pixels bornée avant décodage', image_enregistrer($source_img(100, 100, 'png'), $dossier_img,
+        ['max_pixels' => 5000])['erreur'] === 'Image trop grande (5 000 pixels au plus).');
     verifie('envoi par formulaire : erreurs du navigateur traduites',
         image_recevoir([], $dossier_img)['erreur'] === 'Aucun fichier reçu.'
         && str_starts_with((string)image_recevoir(['error' => UPLOAD_ERR_INI_SIZE], $dossier_img)['erreur'], 'Fichier trop lourd')

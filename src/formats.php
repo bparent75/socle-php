@@ -46,7 +46,8 @@ if (!function_exists('maintenant')) {
 if (!function_exists('date_fr')) {
     /**
      * Date-heure en français, convertie dans le fuseau demandé.
-     * Formes : complet, jour, court, heure, numerique.
+     * Formes : complet, jour, court, heure, numerique. L'heure s'écrit toujours avec ses
+     * minutes, « 19h00 », jamais « 19h » (décision 4.4 du 30 octobre 2026).
      */
     function date_fr(?string $utc, string $forme = 'complet', ?DateTimeZone $tz = null): string
     {
@@ -55,7 +56,7 @@ if (!function_exists('date_fr')) {
         $d = $d->setTimezone($tz ?? new DateTimeZone('Europe/Paris'));
         $jour  = SOCLE_JOURS_FR[(int)$d->format('N') - 1];
         $mois  = SOCLE_MOIS_FR[(int)$d->format('n') - 1];
-        $heure = $d->format('i') === '00' ? $d->format('G') . 'h' : $d->format('G') . 'h' . $d->format('i');
+        $heure = heure_fr($d->format('H:i'));
         return match ($forme) {
             'jour'      => $jour . ' ' . (int)$d->format('j') . ' ' . $mois . ' ' . $d->format('Y'),
             'court'     => (int)$d->format('j') . ' ' . $mois . ' ' . $d->format('Y'),
@@ -63,6 +64,23 @@ if (!function_exists('date_fr')) {
             'numerique' => $d->format('d/m/Y'),
             default     => $jour . ' ' . (int)$d->format('j') . ' ' . $mois . ' ' . $d->format('Y') . ' à ' . $heure,
         };
+    }
+}
+
+if (!function_exists('heure_fr')) {
+    /**
+     * Heure locale « HH:MM » ou « HH:MM:SS » (colonne TIME) en « 19h00 », « 9h30 » : heure sans
+     * zéro initial, minutes toujours sur deux chiffres (décision 4.4). Sans conversion de fuseau :
+     * c'est une heure d'horaire, comme date_simple_fr() une date de calendrier. Vide si illisible.
+     * Même nom et même entrée que les copies du calendrier et des inscriptions.
+     */
+    function heure_fr(?string $hhmm): string
+    {
+        if ($hhmm === null || !preg_match('/^(\d{1,2}):(\d{2})(?::\d{2})?$/', trim($hhmm), $m)
+            || (int)$m[1] > 23 || (int)$m[2] > 59) {
+            return '';
+        }
+        return (int)$m[1] . 'h' . $m[2];
     }
 }
 
@@ -82,11 +100,11 @@ if (!function_exists('euros')) {
     function euros(?int $cents, string $si_null = 'Sur devis'): string
     {
         if ($cents === null) return $si_null;
-        $e = intdiv($cents, 100);
-        $reste = $cents % 100;
-        $s = number_format($e, 0, ',', ' ');
-        if ($reste !== 0) $s .= ',' . str_pad((string)$reste, 2, '0', STR_PAD_LEFT);
-        return $s . ' €';
+        // Calcul sur la valeur absolue : un avoir de -10,50 € donnait « -10,-50 € », et -0,50 € « 0,-50 € ».
+        $abs = abs($cents);
+        $s = number_format(intdiv($abs, 100), 0, ',', ' ');
+        if ($abs % 100 !== 0) $s .= ',' . str_pad((string)($abs % 100), 2, '0', STR_PAD_LEFT);
+        return ($cents < 0 ? '-' : '') . $s . ' €';
     }
 }
 
@@ -145,12 +163,14 @@ if (!function_exists('taille_lisible')) {
 
 if (!function_exists('nombre_fr')) {
     /**
-     * Nombre décimal à la française : « 3,5 », « 1 250 », « 2 » (zéros finaux retirés).
+     * Nombre décimal à la française : « 3,5 », « 1 250 », « 2 » (zéros finaux de la partie
+     * décimale retirés ; ceux de la partie entière, jamais : nombre_fr(40, 0) donne « 40 »).
      * Pour accorder un mot au nombre, voir accorder() ; pour un montant, euros().
      */
     function nombre_fr(float $n, int $decimales = 2): string
     {
-        return rtrim(rtrim(number_format($n, $decimales, ',', ' '), '0'), ',');
+        $s = number_format($n, $decimales, ',', ' ');
+        return $decimales > 0 ? rtrim(rtrim($s, '0'), ',') : $s;
     }
 }
 

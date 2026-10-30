@@ -2,7 +2,7 @@
 /**
  * socle-php — validation de formulaire : contrôle, conversion et messages en français.
  *
- * Attend de l'application hôte : h() et date_simple_fr() (src/formats.php). Rien d'autre.
+ * Attend de l'application hôte : h(), date_simple_fr() et heure_fr() (src/formats.php). Rien d'autre.
  *
  *   $f = formulaire_valider($_POST, [
  *       'nom'      => ['requis', 'max:120'],
@@ -176,7 +176,7 @@ if (!function_exists('formulaire_champ')) {
                     }
                 } elseif ($type === 'date' || $type === 'heure') {
                     if ($bas ? strcmp($v, $p) < 0 : strcmp($v, $p) > 0) {
-                        $libelle = $type === 'date' ? date_simple_fr($p) : str_replace(':', 'h', $p);
+                        $libelle = $type === 'date' ? date_simple_fr($p) : heure_fr($p);
                         $e = ($bas ? 'Au plus tôt : ' : 'Au plus tard : ') . $libelle . '.';
                     }
                 } elseif ($bas ? mb_strlen($v) < (int) $p : mb_strlen($v) > (int) $p) {

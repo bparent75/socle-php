@@ -52,7 +52,7 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 
 | Fichier | Rôle |
 |---|---|
-| `src/formats.php` | Français : dates (« lundi 21 septembre 2026 à 14h30 »), montants, nombres (`nombre_fr`, 2.0), accord (`accorder`), initiales, retrait d'accents, adresses lisibles, échappement |
+| `src/formats.php` | Français : dates (« lundi 21 septembre 2026 à 14h30 »), heures toujours avec leurs minutes (« 19h00 », `heure_fr`, 2.1), montants en centimes (négatifs compris), nombres (`nombre_fr`, 2.0), accord (`accorder`), initiales, retrait d'accents, adresses lisibles, échappement |
 | `src/securite.php` | Session et HTTPS derrière un proxy, jeton CSRF, limitation des tentatives, jetons hachés, liens signés à expiration, liens signés **révocables par version** (`signature_revocable`, 2.0) |
 | `src/connexion.php` | Connexion par lien magique et rôles (2.0) : `utilisateur_courant()`, `exiger_connexion()`, `exiger_admin()`, amorçage des admins — voir plus bas |
 | `src/parametres.php` | `param()` / `param_definir()` : valeurs modifiables par l'équipe, table `config` (2.0) |
@@ -173,6 +173,13 @@ implémentation : toutes ces fonctions sont gardées par `function_exists`.
 
 ## Cron, flash, formulaires, images (2.1)
 
+**Heures : « 19h00 », jamais « 19h ».** Décision du 30 octobre 2026 (chantier 4.4) : les
+minutes s'écrivent toujours, sur deux chiffres. `date_fr()` la suit depuis la 2.1 (« à 14h00 »
+au lieu de « à 14h ») ; `heure_fr('19:00')` met en forme une heure d'horaire, sans fuseau,
+comme les copies du calendrier et des inscriptions qu'elle a vocation à remplacer. Dans le
+même lot : `euros()` écrit enfin un montant négatif (« -10,50 € », il donnait « -10,-50 € »),
+et `nombre_fr($n, 0)` ne mange plus les zéros de la partie entière (« 40 », il donnait « 4 »).
+
 **Surveillance du cron.** Une tâche planifiée de mutualisé peut s'arrêter sans bruit (chemin
 PHP changé, tâche désactivée) : la file de courriels ne part plus, et on le découvre des
 semaines après. En tête de `cron.php`, `cron_temoin()` note le passage (clé
@@ -231,7 +238,7 @@ php tests.php                           # sur un poste avec PHP
 node outils/executer-cli.mjs tests.php  # sans PHP (PHP-WASM, voir ci-dessus)
 ```
 
-231 contrôles (223 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
+235 contrôles (227 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
 tentatives, unicité et annulation dans la file, garde-fou d'envoi en session SSH,
 échappement et habillage du gabarit (boutons, encadrés, images intégrées), avis de non-remise (analyse, gravité,
 rapprochement, boîte simulée), bornage du journal, porte de démonstration, paramètres,

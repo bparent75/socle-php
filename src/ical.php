@@ -10,7 +10,7 @@
  * de caractère) et l'échappement des virgules et points-virgules sont figés ici.
  *
  * Les heures sont LOCALES (Europe/Paris), déclarées par un bloc VTIMEZONE : un
- * « mercredi 18h » reste à 18h au changement d'heure, ce qu'un horaire UTC figé ne
+ * « mercredi 18h00 » reste à 18h00 au changement d'heure, ce qu'un horaire UTC figé ne
  * garantit pas. Le flux est en lecture seule ; servir l'URL signée et révocable
  * (signature_revocable()) plutôt qu'une URL devinable.
  */
