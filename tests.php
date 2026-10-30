@@ -422,8 +422,12 @@ verifie('BOM UTF-8 en tête', str_starts_with($csv, "\u{FEFF}"));
 verifie('séparateur point-virgule', str_contains($csv, "Nom;Détail"));
 verifie('deux lignes écrites, champ à point-virgule protégé par des guillemets',
     $n === 2 && str_contains($csv, '"Zoé;bis"'));
-verifie('cellule-formule neutralisée', str_contains($csv, "'=1+2") && csv_cellule('-2') === "'-2"
-    && csv_cellule('@x') === "'@x" && csv_cellule('10,5') === '10,5');
+verifie('cellule-formule neutralisée', str_contains($csv, "'=1+2") && csv_cellule('-2+3') === "'-2+3"
+    && csv_cellule('@x') === "'@x" && csv_cellule('10,5') === '10,5' && csv_cellule('+33612345678') === "'+33612345678"
+    && csv_cellule('-A1') === "'-A1" && csv_cellule("-2\n") === "'-2\n" && csv_cellule('--2') === "'--2");
+verifie('montant négatif laissé en nombre', csv_cellule('-2') === '-2' && csv_cellule('-12,50') === '-12,50'
+    && csv_cellule('-1 080,50') === '-1 080,50' && csv_cellule("-1\u{202F}080") === "-1\u{202F}080"
+    && csv_cellule(-7.5) === '-7.5' && csv_cellule('-12 50') === "'-12 50");
 $flux = fopen('php://memory', 'w+');
 csv_ecrire($flux, ['x'], [['=brut']], ['proteger_formules' => false]);
 rewind($flux);

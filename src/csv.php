@@ -13,14 +13,19 @@
  *   - une cellule qui commence par = + - @ (ou tabulation) est préfixée d'une
  *     apostrophe : sans cela le tableur l'exécuterait comme une formule — une donnée
  *     saisie par un tiers deviendrait du code chez la personne qui ouvre l'export.
+ *     Exception (2.1) : un nombre négatif seul (« -12,50 », « -1 080 ») reste tel quel.
+ *     Des chiffres, une virgule et des espaces ne forment aucune formule, et préfixé il
+ *     deviendrait du texte que le tableur ne sait plus additionner. Le « + » n'est pas
+ *     exempté : « +33612345678 » doit rester un numéro, pas devenir 33612345678.
  */
 declare(strict_types=1);
 
 if (!function_exists('csv_cellule')) {
-    /** Neutralise une cellule qui serait lue comme une formule par le tableur. */
+    /** Neutralise une cellule qui serait lue comme une formule par le tableur (sauf nombre négatif). */
     function csv_cellule(mixed $valeur): string
     {
         $v = (string)$valeur;
+        if (preg_match('/^-\d{1,3}(?:[ \x{00A0}\x{202F}]?\d{3})*(?:[.,]\d+)?\z/u', $v)) return $v;
         return preg_match('/^[=+\-@\t\r]/', $v) ? "'" . $v : $v;
     }
 }
@@ -29,7 +34,7 @@ if (!function_exists('csv_ecrire')) {
     /**
      * Écrit un CSV pour Excel dans un flux ouvert : BOM, en-têtes, lignes.
      * $options : 'proteger_formules' (vrai par défaut — à ne désactiver que si une
-     * colonne doit vraiment commencer par « = » ou « - », un écart négatif par exemple).
+     * colonne doit vraiment commencer par « = » ou « + » ; un nombre négatif passe déjà).
      * Rend le nombre de lignes écrites (en-têtes non comptés).
      */
     function csv_ecrire($flux, array $entetes, iterable $lignes, array $options = []): int

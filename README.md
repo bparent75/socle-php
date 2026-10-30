@@ -57,7 +57,7 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 | `src/connexion.php` | Connexion par lien magique et rôles (2.0) : `utilisateur_courant()`, `exiger_connexion()`, `exiger_admin()`, amorçage des admins — voir plus bas |
 | `src/parametres.php` | `param()` / `param_definir()` : valeurs modifiables par l'équipe, table `config` (2.0) |
 | `src/bd.php` | SQL portable SQLite/MySQL : `sql_insert_ignore()`, `sql_sur_doublon()`, et la migration additive `colonne_assurer()` (2.0) |
-| `src/csv.php` | Export CSV pour Excel en français (2.0) : BOM UTF-8, séparateur `;`, cellules-formules neutralisées |
+| `src/csv.php` | Export CSV pour Excel en français (2.0) : BOM UTF-8, séparateur `;`, cellules-formules neutralisées ; un nombre négatif (« -12,50 ») reste un nombre depuis la 2.1 |
 | `src/ical.php` | Export iCal RFC 5545 (2.0) : heures locales Europe/Paris, pliage qui respecte l'UTF-8 |
 | `src/courriel.php` | File d'envoi avec reprise, gabarit HTML, et le garde-fou des envois refusés en session SSH |
 | `src/rebonds.php` | Courriels non remis (1.8) : avis de non-remise lus en IMAP sans rien marquer lu, échec définitif (5.x.x) ou temporaire (4.x.x), rapprochés du courriel parti, adresse en échec jusqu'à vérification |
@@ -179,6 +179,9 @@ au lieu de « à 14h ») ; `heure_fr('19:00')` met en forme une heure d'horaire,
 comme les copies du calendrier et des inscriptions qu'elle a vocation à remplacer. Dans le
 même lot : `euros()` écrit enfin un montant négatif (« -10,50 € », il donnait « -10,-50 € »),
 et `nombre_fr($n, 0)` ne mange plus les zéros de la partie entière (« 40 », il donnait « 4 »).
+Enfin `csv_cellule()` laisse passer un nombre négatif seul (« -12,50 », « -1 080 ») : préfixé
+d'une apostrophe, il devenait du texte que le tableur n'additionne plus. Tout autre contenu
+commençant par `-`, et tout `+` (« +33… » reste un numéro), reste neutralisé.
 
 **Surveillance du cron.** Une tâche planifiée de mutualisé peut s'arrêter sans bruit (chemin
 PHP changé, tâche désactivée) : la file de courriels ne part plus, et on le découvre des
@@ -238,7 +241,7 @@ php tests.php                           # sur un poste avec PHP
 node outils/executer-cli.mjs tests.php  # sans PHP (PHP-WASM, voir ci-dessus)
 ```
 
-235 contrôles (227 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
+236 contrôles (228 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
 tentatives, unicité et annulation dans la file, garde-fou d'envoi en session SSH,
 échappement et habillage du gabarit (boutons, encadrés, images intégrées), avis de non-remise (analyse, gravité,
 rapprochement, boîte simulée), bornage du journal, porte de démonstration, paramètres,
