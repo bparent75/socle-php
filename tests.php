@@ -183,11 +183,11 @@ $corps = "Bonjour Léa,\n\n# 1. Connectez-vous\n\nAller sur le campus : https://
 $html = courriel_html('Bienvenue, Léa !', $corps, 'Ouvrir', [
     'accent' => ['https://exemple.invalid/choix'], 'apercu' => 'Trois étapes', 'bandeau' => 'MARQUE',
     'pied' => 'Pied propre au message.', 'contact' => 'familles@example.invalid']);
-verifie('bouton à libellé', str_contains($html, '>Aller sur le campus</a>')
+verifie('bouton à libellé', str_contains($html, '>Aller sur le campus</span>')
     && str_contains($html, 'href="https://exemple.invalid/connexion"'));
 verifie('un bouton à libellé ne répète pas son adresse en clair', substr_count($html, 'exemple.invalid/connexion') === 1);
 verifie('bouton d’accent pour l’adresse désignée, bleu pour les autres',
-    str_contains($html, 'background:#E74310"><a href="https://exemple.invalid/choix"')
+    str_contains($html, 'background:#D03C0E"><a href="https://exemple.invalid/choix"')
     && str_contains($html, 'background:#054570"><a href="https://exemple.invalid/connexion"'));
 verifie('intertitre', str_contains($html, '1. Connectez-vous</h2>') && !str_contains($html, '# 1.'));
 verifie('encadré à puces : titre, deux puces, note', substr_count($html, '<li ') === 2
@@ -229,6 +229,78 @@ verifie('aperçu dans un navigateur : images en data:',
 unlink($png);
 verifie('logo absent : le bandeau retombe sur le nom, sans échec',
     str_contains(courriel_html('x', 'y', 'Ouvrir', ['logo' => $png, 'bandeau' => 'MARQUE']), '>MARQUE</td>'));
+
+titre('Thème des courriels (2.2)');
+$html = courriel_html('Sans thème', 'Corps.');
+verifie('sans thème : bandeau historique, aucune image, rien d’une autre charte',
+    !str_contains($html, '<img') && str_contains($html, 'background:#054570;padding:22px') && str_contains($html, '>Essai Socle</td>'));
+verifie('largeur 600 px, fixée aussi pour Outlook', str_contains($html, 'max-width:600px')
+    && str_contains($html, '<!--[if mso]><table role="presentation" width="600"'));
+verifie('mode sombre déclaré, avec ses couleurs et la reprise Outlook.com',
+    str_contains($html, '<meta name="color-scheme" content="light dark">') && str_contains($html, '@media (prefers-color-scheme:dark){.c-fond{background:#0C1821!important}')
+    && str_contains($html, '[data-ogsc] .c-encre{'));
+define('COURRIEL_THEME', [
+    'marque' => 'Maison Essai',
+    'logo' => ['url' => 'https://exemple.invalid/logo.png', 'largeur' => 180, 'hauteur' => 50],
+    'couleurs' => ['bandeau' => '#0b0b0d', 'bouton' => '#ec3013', 'lien' => '#aa1100', 'titre' => 'red;background:url(x)',
+                   'encre' => '#123', 'trait' => 'expression(1)'],
+    'sombre' => ['fond' => '#000000'],
+    'police' => 'Archivo,Arial,sans-serif',
+    'police_web' => ['nom' => 'Archivo', 'url' => 'https://exemple.invalid/archivo.woff2'],
+    'site' => ['url' => 'https://exemple.invalid/', 'libelle' => ''],
+    'adresse' => '1 rue de l’Essai, 75000 Paris',
+    'pied' => 'Pied du thème.',
+]);
+$corps = "Bonjour,\n\nVoir [la page](https://exemple.invalid/p).\n\nhttps://exemple.invalid/aller";
+$html = courriel_html('Avec thème', $corps);
+verifie('logo du thème : adresse https absolue, dimensions, texte de remplacement = la marque',
+    str_contains($html, '<img src="https://exemple.invalid/logo.png" width="180" height="50" alt="Maison Essai"')
+    && !str_contains($html, 'cid:'));
+verifie('couleurs du thème : bandeau, bouton, liens, texte',
+    str_contains($html, 'bgcolor="#0b0b0d"') && str_contains($html, 'background:#ec3013"><a href="https://exemple.invalid/aller"')
+    && str_contains($html, 'style="color:#aa1100">la page</a>') && str_contains($html, 'color:#123;'));
+verifie('couleur douteuse écartée au profit de la précédente', !str_contains($html, 'url(x)') && !str_contains($html, 'expression(')
+    && str_contains($html, 'color:#054570">Avec thème</h1>') && str_contains($html, 'border-top:1px solid #C8D5DF'));
+verifie('police du thème et police web déclarée', str_contains($html, 'font-family:Archivo,Arial,sans-serif')
+    && str_contains($html, "@font-face{font-family:'Archivo'") && str_contains($html, 'src:url(https://exemple.invalid/archivo.woff2)'));
+verifie('couleur sombre du thème', str_contains($html, '.c-fond{background:#000000!important}'));
+verifie('pied du thème : marque, site sans « https:// », adresse, phrase, contact',
+    str_contains($html, '<strong>Maison Essai</strong> · <a href="https://exemple.invalid/"') && str_contains($html, '>exemple.invalid</a>')
+    && str_contains($html, '1 rue de l’Essai') && str_contains($html, 'Pied du thème.') && str_contains($html, 'mailto:contact@example.invalid'));
+$texte = courriel_texte($corps, []);
+verifie('version texte : le même pied, sous « -- »', str_contains($texte, "https://exemple.invalid/aller\n\n-- \nMaison Essai · https://exemple.invalid/\n")
+    && str_contains($texte, "Pied du thème.\nContact\u{00A0}: contact@example.invalid") && str_contains($texte, 'la page (https://exemple.invalid/p)'));
+verifie('version texte sans options : le corps seul, comme avant', !str_contains(courriel_texte($corps), '-- '));
+$GLOBALS['theme_essai'] = ['couleurs' => ['bouton' => '#00873A'], 'logo' => ['url' => 'http://exemple.invalid/clair.png', 'alt' => 'Logo Essai',
+                                         'url_sombre' => 'https://exemple.invalid/sombre.png']];
+if (!function_exists('courriel_theme_projet')) {
+    function courriel_theme_projet(): array { return $GLOBALS['theme_essai']; }
+}
+$html = courriel_html('Projet', 'https://exemple.invalid/aller');
+verifie('courriel_theme_projet() passe devant la constante', str_contains($html, 'background:#00873A"><a href=')
+    && str_contains($html, 'bgcolor="#0b0b0d"'));
+verifie('logo en http refusé (le précédent reste), variante sombre en https acceptée',
+    str_contains($html, 'src="https://exemple.invalid/logo.png"') && !str_contains($html, 'http://exemple.invalid/clair.png')
+    && str_contains($html, 'class="logo-sombre"') && str_contains($html, 'src="https://exemple.invalid/sombre.png"')
+    && str_contains($html, 'alt="Logo Essai"') && str_contains($html, '.logo-clair{display:none!important}'));
+$GLOBALS['theme_essai'] = ['police' => 'Arial" onload="x', 'logo' => ['url' => 'https://exemple.invalid/a.png"onerror=x'],
+                           'site' => ['url' => 'javascript:alert(1)']];
+$html = courriel_html('Projet', 'Texte');
+verifie('police, logo et site douteux écartés', !str_contains($html, 'onload') && !str_contains($html, 'onerror')
+    && !str_contains($html, 'javascript:') && str_contains($html, 'font-family:Archivo,Arial,sans-serif'));
+$png = sys_get_temp_dir() . '/socle-essai-' . bin2hex(random_bytes(4)) . '.png';
+file_put_contents($png, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='));
+$html = courriel_html('x', 'y', 'Ouvrir', ['logo' => $png]);
+unlink($png);
+verifie('le logo intégré d’un message (1.7) remplace celui du thème', str_contains($html, 'src="cid:logo@courriel"')
+    && !str_contains($html, 'exemple.invalid/logo.png'));
+$html = courriel_gabarit('Contenu maison', '<p>Déjà <b>mis en forme</b></p>', ['apercu' => 'Aperçu', 'pied' => 'Pied du message.']);
+verifie('courriel_gabarit() habille un contenu HTML fourni', str_contains($html, '<p>Déjà <b>mis en forme</b></p>')
+    && str_contains($html, 'Contenu maison</h1>') && str_contains($html, 'Pied du message.') && str_contains($html, 'bgcolor="#0b0b0d"'));
+$GLOBALS['theme_essai'] = [];
+verifie('couleur_melange() comme color-mix : rouge vers le noir, vers le blanc, hexa court',
+    couleur_melange('#ec3013', '#000000', .82) === '#c22710' && couleur_melange('#ec3013', '#fff', .07) === '#fef1ee'
+    && couleur_melange('#000', '#ffffff', .5) === '#808080' && couleur_melange('rouge', '#fff', .5) === 'rouge');
 
 titre('Courriels non remis');
 verifie('colonne présente reconnue, colonne absente refusée sans erreur',
