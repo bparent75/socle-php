@@ -1,6 +1,6 @@
 {
     "name": "bparent75/socle-php",
-    "description": "Briques PHP réutilisables : formats français, sécurité, connexion par lien magique, second facteur TOTP, file de courriels et avis de non-remise, journal d'audit, QR code.",
+    "description": "Briques PHP réutilisables : formats français, sécurité, connexion par lien magique, second facteur TOTP, file de courriels et avis de non-remise, journal d'audit, surveillance du cron, formulaires, images, QR code.",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -10,7 +10,9 @@
     },
     "suggest": {
         "phpmailer/phpmailer": "Envoi par SMTP signé (file de courriels) ; sans lui, repli sur mail() en texte seul",
-        "ext-imap": "Lecture des avis de non-remise (src/rebonds.php)"
+        "ext-imap": "Lecture des avis de non-remise (src/rebonds.php)",
+        "ext-gd": "Image téléversée : contrôle, réencodage et redimensionnement (src/image.php)",
+        "ext-exif": "Image téléversée : redressement des photos de téléphone selon leur drapeau d'orientation"
     },
     "autoload": {
         "files": [
@@ -22,6 +24,10 @@
             "src/courriel.php",
             "src/rebonds.php",
             "src/journal.php",
+            "src/cron.php",
+            "src/flash.php",
+            "src/validation.php",
+            "src/image.php",
             "src/csv.php",
             "src/ical.php",
             "src/porte_demo.php",

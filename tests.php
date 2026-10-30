@@ -31,7 +31,7 @@ foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as 
 }
 if (!function_exists('h')) {
     foreach (['formats', 'securite', 'bd', 'parametres', 'connexion', 'courriel', 'rebonds',
-              'journal', 'csv', 'ical', 'porte_demo', 'totp'] as $brique) {
+              'journal', 'cron', 'flash', 'validation', 'image', 'csv', 'ical', 'porte_demo', 'totp'] as $brique) {
         require __DIR__ . "/src/$brique.php";
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
@@ -471,6 +471,177 @@ $lignes_ics = explode("\r\n", $ics);
 verifie('aucune ligne au-delà de 75 octets', max(array_map('strlen', $lignes_ics)) <= 75);
 verifie('pliage sans couper un caractère en deux (contenu long intact une fois déplié)',
     str_contains(str_replace("\r\n ", '', $ics), str_repeat('é', 60)));
+
+titre('Surveillance du cron');
+$alertes = fn(): int => (int)bd()->query("SELECT COUNT(*) FROM notification WHERE objet_type = 'cron_alerte'")->fetchColumn();
+$s = cron_situation('cron', 3600);
+verifie('tâche jamais passée : en retard, sans date', cron_dernier_passage() === null && $s['en_retard']
+    && $s['dernier'] === null && $s['silence'] === null);
+verifie('jamais passée : pas d’alerte (copie locale, installation neuve)', !cron_surveiller('cron', 3600) && $alertes() === 0);
+cron_temoin();
+$s = cron_situation('cron', 3600);
+verifie('témoin noté sous la clé déjà lue par les inscriptions',
+    param('cron_dernier_passage') === cron_dernier_passage()
+    && preg_match('/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$/', (string)cron_dernier_passage()) === 1);
+verifie('passage récent : à l’heure, aucune alerte', !$s['en_retard'] && $s['silence'] <= 5 && !cron_surveiller('cron', 3600));
+param_definir('cron_dernier_passage', '2026-01-10T08:00:00Z');
+$s = cron_situation('cron', 3600);
+verifie('silence mesuré et retard constaté', $s['en_retard'] && $s['silence'] > 3600);
+verifie('silence : une alerte mise en file', cron_surveiller('cron', 3600) && $alertes() === 1);
+$n = bd()->query("SELECT * FROM notification WHERE objet_type = 'cron_alerte'")->fetch();
+verifie('alerte adressée au contact, datée en français',
+    $n['destinataire'] === 'contact@example.invalid' && str_contains($n['sujet'], 'Tâche planifiée arrêtée')
+    && str_contains($n['corps'], 'samedi 10 janvier 2026 à 9h'));
+verifie('une seule alerte par épisode de silence', !cron_surveiller('cron', 3600) && $alertes() === 1);
+param_definir('cron_dernier_passage', '2026-02-01T08:00:00Z');   // la tâche a repris, puis s'est tue de nouveau
+verifie('nouvel épisode : nouvelle alerte', cron_surveiller('cron', 3600) && $alertes() === 2);
+cron_temoin('relances');
+verifie('plusieurs tâches suivies séparément', cron_dernier_passage('relances') !== null
+    && !cron_situation('relances', 60)['en_retard'] && cron_situation('cron', 3600)['en_retard']);
+param_definir('rebonds_dernier_passage', '2026-01-10T08:00:00Z');
+verifie('destinataire au choix', cron_surveiller('rebonds', 3600, 'veille@example.org')
+    && bd()->query("SELECT destinataire FROM notification WHERE objet_type = 'cron_alerte' ORDER BY id DESC LIMIT 1")
+           ->fetchColumn() === 'veille@example.org');
+
+titre('Messages flash');
+$_SESSION = [];
+verifie('aucun message : rien à afficher', afficher_flashs() === '' && flashs() === []);
+flash('ok', 'Inscription enregistrée.');
+flash('erreur', '<b>Échec</b>');
+$html = afficher_flashs();
+verifie('messages affichés dans l’ordre, échappés',
+    strpos($html, 'Inscription enregistrée.') < strpos($html, '&lt;b&gt;Échec&lt;/b&gt;') && !str_contains($html, '<b>'));
+verifie('erreur annoncée aussitôt, le reste poliment',
+    str_contains($html, 'class="flash flash-erreur" role="alert"') && str_contains($html, 'class="flash flash-ok" role="status"'));
+verifie('affichés une seule fois', afficher_flashs() === '' && !isset($_SESSION['flash']));
+flash('x" onclick="alert(1)', 'Piège');
+verifie('type réduit à une classe CSS sûre', str_contains(afficher_flashs(), 'class="flash flash-xonclickalert1"'));
+$_SESSION['flash'] = 'Ancien message';   // forme du site de Tristan : une simple chaîne
+verifie('ancienne forme (texte seul) encore lue', flashs() === [['type' => 'ok', 'texte' => 'Ancien message']]);
+$_SESSION['flash'] = 'Premier';
+flash('info', 'Second');
+verifie('ajout à une ancienne forme sans perte', count(flashs()) === 2);
+
+titre('Validation de formulaire');
+$f = formulaire_valider([
+    'nom' => '  Élise Martin ', 'courriel' => ' Elise@Example.ORG ', 'tarif' => '1 080,5', 'petit' => '0,29',
+    'seance' => '05/11/2026', 'debut' => '18h', 'tel' => '+33 6 12 34 56 78', 'cp' => '75006',
+    'site' => 'https://example.org/page', 'accord' => 'on', 'jours' => ['lundi', ' jeudi ', ''],
+    'age' => '12', 'note' => '14,5', 'intrus' => 'jamais rendu',
+], [
+    'nom' => ['requis', 'max:120'], 'courriel' => ['requis', 'courriel'], 'tarif' => ['montant'],
+    'petit' => ['montant'], 'seance' => ['date', 'min:2026-09-01'], 'debut' => ['heure'], 'tel' => ['telephone'],
+    'cp' => ['code_postal'], 'site' => ['url'], 'accord' => ['case', 'requis'],
+    'jours' => ['liste', 'parmi:lundi,mardi,jeudi'], 'age' => ['entier', 'min:3'], 'note' => ['decimal', 'max:20'],
+    'commentaire' => [], 'rappel' => ['date'], 'options' => ['liste'], 'newsletter' => ['case'],
+]);
+$v = $f['valeurs'];
+verifie('formulaire valide : aucune erreur', $f['erreurs'] === []);
+verifie('texte rogné, courriel en minuscules', $v['nom'] === 'Élise Martin' && $v['courriel'] === 'elise@example.org');
+verifie('montant en centimes, lu sans float', $v['tarif'] === 108050 && $v['petit'] === 29);
+verifie('date et heure normalisées', $v['seance'] === '2026-11-05' && $v['debut'] === '18:00');
+verifie('téléphone français mis en forme', $v['tel'] === '06 12 34 56 78');
+verifie('code postal, adresse web', $v['cp'] === '75006' && $v['site'] === 'https://example.org/page');
+verifie('case cochée en booléen, liste nettoyée', $v['accord'] === true && $v['jours'] === ['lundi', 'jeudi']);
+verifie('nombres typés', $v['age'] === 12 && $v['note'] === 14.5);
+verifie('facultatifs vides : texte vide, null, liste vide, case décochée',
+    $v['commentaire'] === '' && $v['rappel'] === null && $v['options'] === [] && $v['newsletter'] === false);
+verifie('champ hors des règles jamais rendu', !array_key_exists('intrus', $v));
+$f = formulaire_valider([
+    'nom' => '   ', 'courriel' => 'pas-une-adresse', 'tarif' => '12,345', 'seance' => '31/02/2026',
+    'debut' => '25h', 'tel' => '12345', 'cp' => '7500', 'site' => 'javascript:alert(1)', 'jours' => ['lundi', 'dimanche'],
+    'age' => '2', 'note' => '21', 'code' => 'abc', 'titre' => str_repeat('é', 6), 'tableau' => ['x'],
+    'avant' => '2026-08-31', 'cadeau' => '15',
+], [
+    'nom' => ['requis'], 'courriel' => ['courriel'], 'tarif' => ['montant'], 'seance' => ['date'], 'debut' => ['heure'],
+    'tel' => ['telephone'], 'cp' => ['code_postal'], 'site' => ['url'], 'jours' => ['liste', 'parmi:lundi,mardi'],
+    'age' => ['entier', 'min:3'], 'note' => ['decimal', 'max:20'], 'code' => ['motif:/^[A-Z]{3}$/', 'message' => 'Trois lettres capitales.'],
+    'titre' => ['max:5'], 'tableau' => ['requis'], 'avant' => ['date', 'min:2026-09-01'], 'accord' => ['case', 'requis'],
+    'cadeau' => ['montant', 'max:10'], 'liste_vide' => ['liste', 'requis'],
+    'pair' => ['entier', fn($n) => $n !== null && $n % 2 ? 'Nombre pair attendu.' : null],
+]);
+$e = $f['erreurs'];
+verifie('obligatoire', ($e['nom'] ?? '') === 'Ce champ est obligatoire.' && ($e['liste_vide'] ?? '') === 'Choisissez au moins une option.');
+verifie('courriel, montant, date impossible, heure', isset($e['courriel'], $e['tarif'], $e['seance'], $e['debut']));
+verifie('téléphone, code postal, adresse javascript: refusée', isset($e['tel'], $e['cp'], $e['site']));
+verifie('choix hors liste refusé', ($e['jours'] ?? '') === 'Choix invalide.');
+verifie('bornes de nombres et de montants', ($e['age'] ?? '') === 'Valeur minimale : 3.'
+    && ($e['note'] ?? '') === 'Valeur maximale : 20.' && ($e['cadeau'] ?? '') === 'Valeur maximale : 10 €.');
+verifie('message propre au champ', ($e['code'] ?? '') === 'Trois lettres capitales.');
+verifie('longueur comptée en caractères, pas en octets', ($e['titre'] ?? '') === 'Au plus 5 caractères.');
+verifie('tableau là où un texte est attendu', ($e['tableau'] ?? '') === 'Valeur invalide.');
+verifie('date avant la borne', ($e['avant'] ?? '') === 'Au plus tôt : 1 septembre 2026.');
+verifie('case requise', ($e['accord'] ?? '') === 'Cette case doit être cochée.');
+verifie('règle sur mesure', formulaire_valider(['pair' => '7'], ['pair' => ['entier', fn($n) => $n % 2 ? 'Nombre pair attendu.' : null]])['erreurs']
+    === ['pair' => 'Nombre pair attendu.']);
+verifie('saisie fautive rendue telle quelle pour réaffichage', $f['valeurs']['courriel'] === 'pas-une-adresse');
+verifie('message sous le champ, lié par aria',
+    formulaire_erreur($e, 'nom') === '<p class="erreur-champ" id="erreur-nom">Ce champ est obligatoire.</p>'
+    && formulaire_aria($e, 'nom') === ' aria-invalid="true" aria-describedby="erreur-nom"'
+    && formulaire_erreur($e, 'absent') === '' && formulaire_aria($e, 'absent') === ''
+    && formulaire_id('jours[]') === 'jours');
+
+titre('Image téléversée');
+if (!function_exists('imagecreatetruecolor')) {
+    echo "  (ignoré : extension GD absente)\n";
+} else {
+    $dossier_img = sys_get_temp_dir() . '/socle-essai-' . bin2hex(random_bytes(4));
+    $source_img = function (int $l, int $h, string $format, bool $transparent = false) use ($dossier_img): string {
+        @mkdir($dossier_img . '/sources', 0775, true);
+        $im = imagecreatetruecolor($l, $h);
+        imagealphablending($im, false);
+        imagesavealpha($im, true);
+        imagefill($im, 0, 0, $transparent ? imagecolorallocatealpha($im, 0, 0, 0, 127) : imagecolorallocate($im, 200, 30, 30));
+        $chemin = $dossier_img . '/sources/' . bin2hex(random_bytes(4)) . '.bin';
+        match ($format) { 'png' => imagepng($im, $chemin), 'jpeg' => imagejpeg($im, $chemin), 'gif' => imagegif($im, $chemin) };
+        return $chemin;
+    };
+    $r = image_enregistrer($source_img(3000, 1500, 'png'), $dossier_img);
+    verifie('grande image réduite dans sa boîte, ratio gardé', $r['ok'] && $r['largeur'] === 2000 && $r['hauteur'] === 1000
+        && getimagesize($r['chemin'])[0] === 2000);
+    verifie('nom tiré au hasard, extension du type réel', preg_match('/^[0-9a-f]{16}\.png$/', (string)$r['nom']) === 1
+        && $r['type'] === 'image/png' && dirname($r['chemin']) === $dossier_img);
+    $r = image_enregistrer($source_img(800, 600, 'jpeg'), $dossier_img, ['prefixe' => 'Portrait d’Élise']);
+    verifie('petite image jamais agrandie', $r['ok'] && $r['largeur'] === 800 && $r['hauteur'] === 600);
+    verifie('préfixe lisible passé par slug()', str_starts_with((string)$r['nom'], 'portrait-d-elise-') && str_ends_with($r['nom'], '.jpg'));
+    $r = image_enregistrer($source_img(400, 400, 'png'), $dossier_img, ['format' => 'webp', 'max_largeur' => 100]);
+    verifie('format imposé et boîte sur mesure', $r['ok'] && str_ends_with($r['nom'], '.webp')
+        && getimagesize($r['chemin'])['mime'] === 'image/webp' && $r['largeur'] === 100);
+    $r = image_enregistrer($source_img(50, 50, 'gif'), $dossier_img);
+    verifie('GIF converti en PNG', $r['ok'] && $r['type'] === 'image/png');
+    $piege = $source_img(60, 60, 'png');
+    file_put_contents($piege, '<?php echo "charge"; ?>', FILE_APPEND);
+    $r = image_enregistrer($piege, $dossier_img);
+    verifie('charge glissée après l’image : éliminée au réencodage',
+        $r['ok'] && !str_contains((string)file_get_contents($r['chemin']), '<?php'));
+    $r = image_enregistrer($source_img(10, 10, 'png', true), $dossier_img, ['format' => 'jpeg']);
+    $px = imagecolorsforindex($g = imagecreatefromjpeg($r['chemin']), imagecolorat($g, 5, 5));
+    verifie('transparence → blanc en JPEG', $r['ok'] && $px['red'] > 250 && $px['green'] > 250 && $px['blue'] > 250);
+    $r = image_enregistrer($source_img(10, 10, 'png', true), $dossier_img);
+    $g = imagecreatefrompng($r['chemin']);
+    verifie('transparence gardée en PNG', $r['ok'] && (imagecolorat($g, 5, 5) >> 24) === 127);
+    $faux = $dossier_img . '/sources/faux.jpg';
+    file_put_contents($faux, "Ceci n'est pas une image.");
+    $svg = $dossier_img . '/sources/dessin.svg';
+    file_put_contents($svg, '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>');
+    verifie('faux .jpg et SVG refusés', image_enregistrer($faux, $dossier_img)['erreur'] === 'Ce fichier n’est pas une image JPEG, PNG, WebP ou GIF.'
+        && !image_enregistrer($svg, $dossier_img)['ok']);
+    verifie('poids maximal', image_enregistrer($source_img(300, 300, 'png'), $dossier_img, ['max_octets' => 100])['erreur']
+        === 'Fichier trop lourd (100 o au plus).');
+    verifie('taille en pixels bornée avant décodage', str_starts_with((string)image_enregistrer($source_img(100, 100, 'png'), $dossier_img,
+        ['max_pixels' => 5000])['erreur'], 'Image trop grande'));
+    verifie('envoi par formulaire : erreurs du navigateur traduites',
+        image_recevoir([], $dossier_img)['erreur'] === 'Aucun fichier reçu.'
+        && str_starts_with((string)image_recevoir(['error' => UPLOAD_ERR_INI_SIZE], $dossier_img)['erreur'], 'Fichier trop lourd')
+        && image_recevoir(['error' => [0, 0]], $dossier_img)['erreur'] === 'Un seul fichier attendu.');
+    verifie('fichier qui n’a pas été téléversé refusé (is_uploaded_file)',
+        image_recevoir(['error' => UPLOAD_ERR_OK, 'tmp_name' => $piege], $dossier_img)['erreur'] === 'Fichier invalide.');
+    $vider = function (string $d) use (&$vider): void {
+        foreach (glob($d . '/*') ?: [] as $x) is_dir($x) ? $vider($x) : unlink($x);
+        rmdir($d);
+    };
+    $vider($dossier_img);
+}
 
 titre('Second facteur TOTP');
 // Vecteurs de la RFC 6238 (annexe B), réduits à six chiffres : secret ASCII

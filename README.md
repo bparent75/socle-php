@@ -62,6 +62,10 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 | `src/courriel.php` | File d'envoi avec reprise, gabarit HTML, et le garde-fou des envois refusés en session SSH |
 | `src/rebonds.php` | Courriels non remis (1.8) : avis de non-remise lus en IMAP sans rien marquer lu, échec définitif (5.x.x) ou temporaire (4.x.x), rapprochés du courriel parti, adresse en échec jusqu'à vérification |
 | `src/journal.php` | Journal d'audit |
+| `src/cron.php` | Surveillance de la tâche planifiée (2.1) : témoin de passage `cron_temoin()`, et `cron_surveiller()` qui écrit à l'équipe si elle se tait — voir plus bas |
+| `src/flash.php` | Messages flash (2.1) : `flash('ok', '…')` avant une redirection, `afficher_flashs()` sur la page suivante |
+| `src/validation.php` | Validation de formulaire (2.1) : `formulaire_valider()` contrôle, convertit (montant en centimes, date en AAAA-MM-JJ…) et rend les messages en français ; `formulaire_erreur()` / `formulaire_aria()` pour les afficher accessibles |
+| `src/image.php` | Image téléversée (2.1) : `image_recevoir($_FILES['photo'], $dossier)` — type lu dans le contenu, réencodage GD (métadonnées et charges glissées éliminées), réduction, nom tiré au hasard |
 | `src/qrcode.php` | `qr_svg()` : un QR code en SVG en ligne, accessible. L'encodage vient de `bacon/bacon-qr-code` |
 | `src/porte_demo.php` | Rideau par mot de passe sur un site en construction, et interdiction d'indexation |
 | `src/totp.php` | Second facteur TOTP, RFC 6238 (1.9) : secret, code à six chiffres, vérification à fenêtre ±30 s, adresse `otpauth://` à donner à `qr_svg()`. Fonctions gardées par `function_exists` tant qu'Ipesup Orientation porte sa propre copie |
@@ -82,6 +86,7 @@ Le socle s'adapte au projet plutôt que l'inverse :
 | Constante `ADMINS_AMORCAGE` (2.0) | Comptes administrateurs créés s'ils n'existent pas (`amorcer_admins()`) : liste d'adresses, ou tableau adresse => nom. Les adresses en `example.invalid` (modèle recopié) sont ignorées |
 | Constantes `DUREE_LIEN_MAGIQUE`, `URL_CONNEXION` (2.0) | Durée du lien de connexion (1800 s à défaut) et page qui le reçoit (`URL_BASE . '/connexion.php'` à défaut) |
 | Constantes `MARQUE_NOM`, `MARQUE_BLEU`, `CONTACT_COURRIEL` | Habillage des courriels |
+| Constante `ALERTE_COURRIEL` (2.1) | Destinataire des alertes de `cron_surveiller()` ; `CONTACT_COURRIEL` à défaut |
 | Constantes `MARQUE_ACCENT`, `MARQUE_BLEU_CLAIR` (1.7) | Couleur des boutons d'accent (défaut `#E74310`) et filet des encadrés (défaut : `MARQUE_BLEU`) |
 | Constante `EMAIL_EXPEDITEUR_TECHNIQUE` | Adresse « ne pas répondre » des seuls messages techniques (`expediteur_technique()`, à passer en paramètre `$expediteur` de `filer_courriel`) ; `EMAIL_EXPEDITEUR` reste l'adresse humaine |
 | Colonnes `repondre_a`, `copie` (1.5) | Reply-To et Cc propres à un message (deux derniers paramètres de `filer_courriel`), par exemple la personne de l'équipe qui a rédigé un envoi groupé. Depuis la 1.6, `copie` accepte plusieurs adresses séparées par des virgules (une famille dans un seul message) : passer la colonne en `TEXT`. Facultatives : sans elles, la file fonctionne comme avant tant qu'on ne les utilise pas |
@@ -104,8 +109,9 @@ Trois façons, par ordre de préférence :
 
 1. **Composer**. Le dépôt étant public, aucune clé n'est nécessaire :
    ```json
-   { "repositories": [{ "type": "vcs", "url": "https://github.com/bparent75/socle-php.git" }],
-     "require": { "bparent75/socle-php": "^1.0" } }
+   { "repositories": [{ "type": "vcs", "url": "https://github.com/bparent75/socle-php.git",
+                        "no-api": true }],
+     "require": { "bparent75/socle-php": "^2.1" } }
    ```
 
 2. **Sous-module git** : `git submodule add https://github.com/bparent75/socle-php.git socle`
@@ -165,6 +171,41 @@ projet). `dernier_admin_actif()` empêche de désactiver le dernier compte
 d'administration. Un projet à rôles multiples ou par saison garde sa propre
 implémentation : toutes ces fonctions sont gardées par `function_exists`.
 
+## Cron, flash, formulaires, images (2.1)
+
+**Surveillance du cron.** Une tâche planifiée de mutualisé peut s'arrêter sans bruit (chemin
+PHP changé, tâche désactivée) : la file de courriels ne part plus, et on le découvre des
+semaines après. En tête de `cron.php`, `cron_temoin()` note le passage (clé
+`cron_dernier_passage` de la table `config`, celle que lisent déjà les écrans des inscriptions).
+Dans une page que l'équipe ouvre souvent, `cron_surveiller('cron', 2 * 3600)` écrit à
+`ALERTE_COURRIEL` si la tâche se tait depuis plus de deux heures : envoi immédiat (la file ne
+partirait pas, puisque c'est le cron qui la traite), **une seule fois par épisode** de silence,
+réclamé par un `UPDATE` conditionnel pour que deux requêtes simultanées n'écrivent pas deux
+fois. Une tâche qui n'a jamais tourné n'alerte pas (copie locale) ; `cron_situation()` la dit
+en retard, pour que l'écran affiche « jamais ». Plusieurs tâches se suivent par leur nom
+(`cron_temoin('rebonds')`). Libris garde son suivi plus fin (début et fin de passage, au journal).
+
+**Messages flash.** `flash($type, $texte)` puis `afficher_flashs()` : même forme que la copie
+de la nouvelle identité ; une valeur texte seule (forme du site de Tristan) est encore lue.
+Une erreur est annoncée par `role="alert"`, le reste par `role="status"`.
+
+**Validation de formulaire.** Les règles tiennent sur une ligne par champ ; l'exemple complet
+est en tête de `src/validation.php`. Ce qu'il faut savoir : un montant se lit comme une
+chaîne et sort **en centimes** (`0,29` donne 29, jamais 28,999…) ; `min:`/`max:` portent sur
+la longueur d'un texte, la valeur d'un nombre (en euros pour un montant), la borne d'une date ;
+un champ absent des règles n'est **jamais** rendu (pas d'écriture en base d'un champ que le
+formulaire n'était pas censé envoyer) ; la saisie fautive est rendue telle quelle pour être
+réaffichée. Les noms sont préfixés `formulaire_` : `valider()` existe déjà ailleurs.
+
+**Image téléversée.** `image_recevoir($_FILES['photo'] ?? [], $dossier, ['max_largeur' => 1200])`
+rend `['ok', 'erreur', 'nom', 'chemin', 'largeur', 'hauteur', 'type']`. Le type est lu dans le
+contenu (fileinfo et getimagesize doivent concorder) ; l'image est toujours décodée puis
+réencodée par GD, ce qui élimine la position GPS d'une photo de téléphone comme un script
+glissé dans un fichier polyglotte ; SVG refusé ; taille en pixels bornée **avant** décodage ;
+photo redressée selon son drapeau EXIF ; nom tiré au hasard. `image_enregistrer()` fait le
+même travail sur un fichier déjà présent (import, tests). Les inscriptions ont leur propre
+`image_televersee()`, d'où un autre nom ici.
+
 ## Harnais de vérification locale : `outils/` (2.0)
 
 Pour les postes sans PHP (PHP-WASM). Publié une fois ici, au lieu de trois copies
@@ -190,12 +231,13 @@ php tests.php                           # sur un poste avec PHP
 node outils/executer-cli.mjs tests.php  # sans PHP (PHP-WASM, voir ci-dessus)
 ```
 
-168 contrôles (160 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
+231 contrôles (223 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
 tentatives, unicité et annulation dans la file, garde-fou d'envoi en session SSH,
 échappement et habillage du gabarit (boutons, encadrés, images intégrées), avis de non-remise (analyse, gravité,
 rapprochement, boîte simulée), bornage du journal, porte de démonstration, paramètres,
-migrations additives, connexion par lien magique, export CSV, liens révocables, iCal, TOTP, QR code.
-Aucun courriel envoyé ; seule une image d'un pixel est écrite dans le répertoire temporaire, puis effacée.
+migrations additives, connexion par lien magique, export CSV, liens révocables, iCal,
+surveillance du cron, messages flash, validation de formulaire, image téléversée, TOTP, QR code.
+Aucun courriel envoyé ; seules quelques images d'essai sont écrites dans le répertoire temporaire, puis effacées.
 
 ## Provenance
 
