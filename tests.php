@@ -863,6 +863,10 @@ if (!function_exists('openssl_encrypt')) {
     $nouvelle_requete();
     auth_premier_facteur($c1, 'lien');
     verifie('un code de secours ne sert qu’une fois', auth_second_facteur('secours', $codes[0]) === 'refus');
+    bd()->prepare('INSERT INTO auth_code_secours (compte_id, empreinte, cree_le) VALUES (?, ?, ?)')
+        ->execute([$c1, hacher_jeton('ABCD-EF23'), maintenant()]);
+    verifie('code repris d’un ancien format (XXXX-XXXX) : accepté une fois', code_secours_utiliser($c1, 'abcdef23')
+            && !code_secours_utiliser($c1, 'ABCD-EF23'));
     lien_magique_envoyer('mdp@example.org');
     preg_match('/jeton=([A-Za-z0-9_-]+)/', (string)bd()->query("SELECT corps FROM notification WHERE objet_type = 'connexion'
         ORDER BY id DESC LIMIT 1")->fetchColumn(), $m);

@@ -8,6 +8,11 @@
  * soit 50 bits chacun : assez pour se passer d'Argon2, ils sont stockés en empreinte HMAC
  * (hacher_jeton). Montrés UNE seule fois, à la génération ; chacun ne sert qu'une fois
  * (consommation atomique) ; en générer de nouveaux annule les anciens.
+ *
+ * Reprise d'un projet qui avait ses propres codes (Libris : huit codes XXXX-XXXX, hachés par
+ * hacher_jeton() tiret compris) : leurs empreintes sont recopiées telles quelles dans
+ * auth_code_secours, et un code de 8 caractères est cherché sous cette forme. Personne ne perd
+ * les codes qu'il a notés.
  */
 declare(strict_types=1);
 
@@ -43,7 +48,8 @@ if (!function_exists('code_secours_utiliser')) {
     function code_secours_utiliser(int $id, string $code): bool
     {
         $code = code_secours_normaliser($code);
-        if (strlen($code) !== 10) return false;
+        if (strlen($code) === 8) $code = substr($code, 0, 4) . '-' . substr($code, 4);   // ancien format repris
+        elseif (strlen($code) !== 10) return false;
         $maj = bd()->prepare('UPDATE auth_code_secours SET utilise_le = ?
                               WHERE compte_id = ? AND empreinte = ? AND utilise_le IS NULL');
         $maj->execute([maintenant(), $id, hacher_jeton($code)]);
