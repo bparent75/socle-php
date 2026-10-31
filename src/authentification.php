@@ -249,7 +249,7 @@ if (!function_exists('auth_session_renforcer')) {
     function auth_session_renforcer(int $id, string $mode): void
     {
         if ((int)($_SESSION['utilisateur_id'] ?? 0) !== $id) return;
-        if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE && !headers_sent()) session_regenerate_id(true);
         if (!auth_facteurs_forts((string)($_SESSION['auth_facteurs'] ?? ''))) {
             $_SESSION['auth_facteurs'] = ($_SESSION['auth_facteurs'] ?? 'mdp') . '+' . $mode;
         }
@@ -262,7 +262,7 @@ if (!function_exists('auth_ouvrir_session')) {
     function auth_ouvrir_session(int $id, string $facteurs, bool $verifie_maintenant): void
     {
         demarrer_session();
-        if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE && !headers_sent()) session_regenerate_id(true);
         unset($_SESSION['auth_en_attente']);
         $_SESSION['utilisateur_id'] = $id;
         $_SESSION['auth_facteurs'] = $facteurs;
@@ -483,7 +483,7 @@ if (!function_exists('auth_verifier')) {
             journaliser('echec_verification', 'utilisateur', $id, $mode, $id);
             return 'refus';
         }
-        if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
+        if (session_status() === PHP_SESSION_ACTIVE && !headers_sent()) session_regenerate_id(true);
         $_SESSION['auth_verifie_le'] = time();
         if ($mode !== 'mdp' && !auth_facteurs_forts((string)($_SESSION['auth_facteurs'] ?? ''))) {
             $_SESSION['auth_facteurs'] = ($_SESSION['auth_facteurs'] ?? 'lien') . '+' . $mode;
