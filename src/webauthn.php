@@ -184,6 +184,7 @@ if (!function_exists('cle_enregistrer')) {
                        mb_substr(trim($nom) !== '' ? trim($nom) : 'Clé d’accès', 0, 100),
                        $record->backupEligible ? 1 : 0, maintenant()]);
         durable_revoquer_tout($id);
+        auth_session_renforcer($id, 'cle');
         journaliser('2fa_activee', 'utilisateur', $id, 'cle', $id);
         auth_aviser($id, 'Clé d’accès ajoutée', "Une clé d’accès (« $nom ») vient d’être ajoutée à votre compte.");
         return $premier ? codes_secours_generer($id) : [];

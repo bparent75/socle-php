@@ -134,16 +134,16 @@ if (!function_exists('mdp_verifier')) {
 
 if (!function_exists('mdp_definir')) {
     /**
-     * Pose ou change le mot de passe (déjà contrôlé par mdp_erreur()). Ferme les sessions
-     * durables du compte ; un CHANGEMENT (pas la première pose) est signalé par courriel.
-     * Une personne connectée garde sa session : rappeler auth_terminer() n'est pas utile.
+     * Pose ou change le mot de passe (déjà contrôlé par mdp_erreur()). Ferme toutes les autres
+     * sessions du compte, durables comprises ; un CHANGEMENT (pas la première pose) est signalé
+     * par courriel. La personne connectée garde la sienne.
      */
     function mdp_definir(int $id, string $mdp): void
     {
         $changement = mdp_defini($id);
         bd()->prepare('UPDATE auth_compte SET mot_de_passe = ?, mdp_defini_le = ? WHERE compte_id = ?')
             ->execute([mdp_hacher($mdp), maintenant(), $id]);
-        durable_revoquer_tout($id);
+        auth_fermer_autres_sessions($id);
         journaliser($changement ? 'mot_de_passe_change' : 'mot_de_passe_defini', 'utilisateur', $id, '', $id);
         if ($changement) {
             auth_aviser($id, 'Votre mot de passe a été changé',

@@ -170,6 +170,7 @@ if (!function_exists('totp_enroler')) {
         bd()->prepare('UPDATE auth_compte SET totp_chiffre = ?, totp_actif_le = ?, totp_dernier_pas = ? WHERE compte_id = ?')
             ->execute([totp_chiffrer($secret, $id), maintenant(), $pas, $id]);
         durable_revoquer_tout($id);
+        auth_session_renforcer($id, 'totp');
         journaliser('2fa_activee', 'utilisateur', $id, 'totp', $id);
         auth_aviser($id, 'Double authentification activée',
             "Une application d'authentification vient d'être associée à votre compte.");

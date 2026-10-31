@@ -118,12 +118,15 @@ if (!function_exists('auth_a_second_facteur')) {
 }
 
 if (!function_exists('auth_aviser')) {
-    /** Courriel d'avis de sécurité à la personne (urgent, adresse technique). */
+    /**
+     * Courriel d'avis de sécurité à la personne (urgent, adresse technique). Rien si le compte
+     * n'a pas d'adresse valable (identifiant de connexion qui n'est pas une adresse : Tristan).
+     */
     function auth_aviser(int $id, string $sujet, string $corps): void
     {
         $compte = auth_compte($id);
         $courriel = $compte ? trim((string)($compte[auth_table()[1]] ?? '')) : '';
-        if ($courriel === '') return;
+        if (filter_var($courriel, FILTER_VALIDATE_EMAIL) === false) return;
         filer_courriel($courriel, $sujet, "Bonjour,\n\n" . $corps
             . "\n\nSi vous n'êtes pas à l'origine de cette action, prévenez immédiatement un administrateur.",
             $id, '', null, 'securite', $id, true, expediteur_technique());
@@ -238,6 +241,22 @@ if (!function_exists('auth_facteur_verifier')) {
     }
 }
 
+if (!function_exists('auth_session_renforcer')) {
+    /**
+     * La personne connectée vient de prouver un second facteur hors connexion (enrôlement d'une
+     * application ou d'une clé) : sa session le compte désormais, sans le lui redemander.
+     */
+    function auth_session_renforcer(int $id, string $mode): void
+    {
+        if ((int)($_SESSION['utilisateur_id'] ?? 0) !== $id) return;
+        if (session_status() === PHP_SESSION_ACTIVE) session_regenerate_id(true);
+        if (!auth_facteurs_forts((string)($_SESSION['auth_facteurs'] ?? ''))) {
+            $_SESSION['auth_facteurs'] = ($_SESSION['auth_facteurs'] ?? 'mdp') . '+' . $mode;
+        }
+        $_SESSION['auth_verifie_le'] = time();
+    }
+}
+
 if (!function_exists('auth_ouvrir_session')) {
     /** Pose la session d'un compte authentifié (identifiant régénéré). Interne : voir auth_terminer(). */
     function auth_ouvrir_session(int $id, string $facteurs, bool $verifie_maintenant): void
@@ -284,7 +303,11 @@ if (!function_exists('auth_session_controler')) {
         if ($id > 0) {
             $activite = (int)($_SESSION['auth_activite_le'] ?? $t);
             $debut = (int)($_SESSION['auth_connecte_le'] ?? $t);
-            if ($t - $activite <= auth_duree('AUTH_INACTIVITE') && $t - $debut <= auth_duree('AUTH_DUREE_MAX')) {
+            $depuis = bd()->prepare('SELECT sessions_depuis FROM auth_compte WHERE compte_id = ?');
+            $depuis->execute([$id]);
+            $depuis = (string)$depuis->fetchColumn();
+            if ($t - $activite <= auth_duree('AUTH_INACTIVITE') && $t - $debut <= auth_duree('AUTH_DUREE_MAX')
+                && ($depuis === '' || $debut >= (int)strtotime($depuis))) {
                 $_SESSION['auth_activite_le'] = $t;
                 return $id;
             }
@@ -297,6 +320,22 @@ if (!function_exists('auth_session_controler')) {
         auth_ouvrir_session($durable['compte_id'], $durable['facteurs'], false);
         journaliser('connexion_durable', 'utilisateur', $durable['compte_id'], $durable['facteurs'], $durable['compte_id']);
         return $durable['compte_id'];
+    }
+}
+
+if (!function_exists('auth_fermer_autres_sessions')) {
+    /**
+     * Ferme toutes les sessions de ce compte (ordinaires et durables), sauf celle de la requête
+     * en cours si c'est la sienne : mot de passe changé, second facteur réinitialisé,
+     * « Déconnecter tous les appareils ». Les sessions PHP ne sont pas listées sur le serveur :
+     * on note la date, et auth_session_controler() ferme toute session ouverte avant.
+     */
+    function auth_fermer_autres_sessions(int $id): void
+    {
+        auth_donnees($id);
+        bd()->prepare('UPDATE auth_compte SET sessions_depuis = ? WHERE compte_id = ?')->execute([maintenant(), $id]);
+        durable_revoquer_tout($id);
+        if ((int)($_SESSION['utilisateur_id'] ?? 0) === $id) $_SESSION['auth_connecte_le'] = time();
     }
 }
 
@@ -356,8 +395,9 @@ if (!function_exists('auth_etat_2fa')) {
     function auth_etat_2fa(int $id, string|array $roles): string
     {
         if (!auth_role_tenu_2fa($roles)) return 'ok';
-        if (auth_facteurs_forts((string)($_SESSION['auth_facteurs'] ?? ''))) return 'ok';
-        if (auth_a_second_facteur($id)) return 'second_facteur';
+        $a_facteur = auth_a_second_facteur($id);
+        if ($a_facteur && auth_facteurs_forts((string)($_SESSION['auth_facteurs'] ?? ''))) return 'ok';
+        if ($a_facteur) return 'second_facteur';
         return auth_echeance_2fa($id) > maintenant() ? 'grace' : 'enrolement';
     }
 }
@@ -470,7 +510,7 @@ if (!function_exists('auth_retour')) {
 if (!function_exists('auth_reinitialiser_2fa')) {
     /**
      * Retire tous les seconds facteurs d'un compte (application, clés d'accès, codes de secours)
-     * et ferme ses sessions durables. $par : l'admin qui agit (il doit lui-même avoir passé la
+     * et ferme ses sessions, durables comprises. $par : l'admin qui agit (il doit lui-même avoir passé la
      * vérification renforcée), ou null depuis la ligne de commande — le recours du dernier
      * admin. La personne est prévenue ; si son rôle y est tenu, elle se réenrôle à la prochaine
      * connexion, sans nouveau délai de grâce.
@@ -482,7 +522,7 @@ if (!function_exists('auth_reinitialiser_2fa')) {
                        echeance_2fa = ? WHERE compte_id = ?')->execute([maintenant(), $id]);
         bd()->prepare('DELETE FROM auth_cle_acces WHERE compte_id = ?')->execute([$id]);
         bd()->prepare('DELETE FROM auth_code_secours WHERE compte_id = ?')->execute([$id]);
-        durable_revoquer_tout($id);
+        auth_fermer_autres_sessions($id);
         journaliser('2fa_reinitialisee', 'utilisateur', $id, $par === null ? 'ligne de commande' : 'par un administrateur', $par);
         auth_aviser($id, 'Votre double authentification a été réinitialisée',
             "La double authentification de votre compte vient d'être réinitialisée, et vos appareils restés "

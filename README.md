@@ -249,7 +249,10 @@ Enrôlement : montrer `qr_svg(totp_uri($courriel, $secret, MARQUE_NOM))` avec
 `$secret = totp_secret_nouveau()` gardé en session, puis `totp_enroler($id, $secret, $code)`
 rend les dix codes de secours à afficher **une seule fois**. Page Sécurité :
 `mdp_erreur()` / `mdp_definir()`, `codes_secours_generer()`, `durables_lister()`,
-`durable_revoquer()`. Perte de tous les facteurs : `auth_reinitialiser_2fa($id, $admin)`
+`durable_revoquer()`, `auth_fermer_autres_sessions()` (« Déconnecter tous les autres
+appareils » : sessions ordinaires comprises, la date est notée par compte et
+`auth_session_controler()` ferme toute session plus ancienne ; appelée aussi au changement
+de mot de passe et à la réinitialisation). Perte de tous les facteurs : `auth_reinitialiser_2fa($id, $admin)`
 (un autre admin, après sa propre vérification renforcée) ou une commande serveur du
 projet pour le dernier admin — jamais un simple courriel. Migration d'un secret déjà
 enrôlé en clair : `totp_reprendre_secret()`, personne n'a à rescanner.

@@ -105,7 +105,8 @@ CREATE TABLE IF NOT EXISTS auth_compte (
     totp_actif_le    TEXT,                -- NULL : pas d'application d'authentification
     totp_dernier_pas INTEGER,             -- anti-rejeu : dernier pas de 30 s accepté
     poignee_webauthn TEXT,                -- identifiant opaque du compte pour les clés d'accès
-    echeance_2fa     TEXT                 -- fin du délai de grâce d'enrôlement (rôles tenus)
+    echeance_2fa     TEXT,                -- fin du délai de grâce d'enrôlement (rôles tenus)
+    sessions_depuis  TEXT                 -- sessions ouvertes avant cette date : fermées
 );
 
 -- Codes de secours : empreintes HMAC, usage unique.

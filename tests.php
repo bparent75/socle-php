@@ -830,7 +830,11 @@ if (!function_exists('openssl_encrypt')) {
     verifie('chiffré recopié sur un autre compte : null', totp_dechiffrer($chiffre, $c1 + 1) === null);
     $p = intdiv(time(), 30);
     verifie('enrôlement : code faux refusé', totp_enroler($c1, $s, '000000') === null && !auth_a_second_facteur($c1));
+    $nouvelle_requete();
+    auth_terminer($c1, 'mdp');
     $codes = totp_enroler($c1, $s, totp_code($s, $p - 1)) ?? [];
+    verifie('enrôlement pendant la session : elle compte le second facteur, rien à redemander',
+            $_SESSION['auth_facteurs'] === 'mdp+totp' && auth_verification_recente() && auth_etat_2fa($c1, 'admin') === 'ok');
     verifie('enrôlement confirmé : dix codes de secours, une fois', count($codes) === 10
             && preg_match('/^[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/', $codes[0]) === 1 && auth_a_second_facteur($c1));
     verifie('… secret chiffré en base',
@@ -968,11 +972,20 @@ if (!function_exists('openssl_encrypt')) {
             && auth_retour() === '/admin.php?page=paiements');
     verifie('retrait du dernier second facteur refusé à un compte tenu', !totp_retirer($c1, true) && auth_a_second_facteur($c1));
     durable_ouvrir($c1, 'mdp+totp');
+    $nouvelle_requete();
+    auth_terminer($c1, 'mdp+totp');
+    $_SESSION['auth_connecte_le'] = time() - 5;
+    $session_c1 = $_SESSION;                       // une session de c1, sur son appareil
+    $nouvelle_requete();
+    auth_terminer($a1, 'lien');                    // l'admin, sur le sien
     auth_reinitialiser_2fa($c1, $a1);
     verifie('réinitialisation : facteurs, codes et appareils retirés, avis envoyé',
             !auth_a_second_facteur($c1) && codes_secours_restants($c1) === 0 && count(durables_lister($c1)) === 0
             && $avis('Votre double authentification a été réinitialisée') === 1);
     verifie('… et sans nouveau délai de grâce', auth_etat_2fa($c1, 'admin') === 'enrolement');
+    verifie('… l’admin qui l’a faite garde sa session', auth_session_controler() === $a1);
+    $_SESSION = $session_c1;
+    verifie('… les sessions ouvertes avant sont fermées (pas seulement les durables)', auth_session_controler() === 0);
     verifie('… journalisée avec l’admin qui l’a faite', (int)bd()->query("SELECT utilisateur_id FROM journal
             WHERE action = '2fa_reinitialisee' ORDER BY id DESC LIMIT 1")->fetchColumn() === $a1);
     $nouvelle_requete();
