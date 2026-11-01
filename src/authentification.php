@@ -3,11 +3,15 @@
  * socle-php — authentification : premier facteur (mot de passe ou lien), second facteur
  * (TOTP, code de secours), session, vérification renforcée, réinitialisation.
  *
- * La cible commune des projets (spécification d'octobre 2026) : première connexion par lien,
- * puis mot de passe ; second facteur obligatoire pour les rôles déclarés, facultatif pour les
- * autres ; « rester connecté » 30 jours ; vérification récente (15 min) sur les pages très
- * sensibles. Les briques voisines font chacune une chose : mot_de_passe.php,
- * session_durable.php, codes_secours.php, totp.php. Ce fichier les enchaîne.
+ * La cible commune des projets (spécification d'octobre 2026, règles simplifiées par Brice le
+ * 1er novembre, D17) : première connexion par lien, puis mot de passe ; second facteur
+ * obligatoire pour les rôles déclarés, facultatif pour les autres ; session fermée après une
+ * heure d'inactivité ; navigateur de confiance 30 jours (le code n'y est plus redemandé, le mot
+ * de passe si). Plus de « rester connecté », plus de vérification renforcée sur les pages : la
+ * vérification récente (15 min) ne garde que la sécurité du compte (mot de passe, second
+ * facteur, clés). Les briques voisines font chacune une chose : mot_de_passe.php,
+ * session_durable.php (navigateur de confiance), codes_secours.php, totp.php. Ce fichier les
+ * enchaîne.
  *
  * Indépendant de la table des comptes : chaque projet a la sienne (utilisateur, utilisateurs,
  * administrateurs, compte…). Il la déclare, et tout ce qui est propre à l'authentification va
@@ -17,14 +21,15 @@
  *   - ROLES_2FA_OBLIGATOIRE : rôles tenus au second facteur (['admin'] à défaut) ;
  *   - facultatif : AUTH_URL_SECOND_FACTEUR, AUTH_URL_ENROLEMENT, AUTH_URL_VERIFICATION (pages
  *     du projet, URL_BASE . '/second-facteur.php', '/securite.php', '/verification.php' à défaut),
- *     AUTH_INACTIVITE (7200 s), AUTH_DUREE_MAX (43200 s), AUTH_VERIFICATION_RECENTE (900 s).
+ *     AUTH_INACTIVITE (3600 s), AUTH_DUREE_MAX (43200 s), AUTH_VERIFICATION_RECENTE (900 s).
  *
  * Règles figées ici :
  *   - la clé de session « utilisateur_id » n'est posée qu'une fois l'authentification COMPLÈTE :
  *     l'état « premier facteur passé, second attendu » vit sous « auth_en_attente » (10 min).
  *     Un module qui lit utilisateur_id tel quel (le calendrier lit la session du portail) ne
  *     laisse donc jamais entrer à mi-parcours ;
- *   - le lien remplace le mot de passe, jamais le second facteur ;
+ *   - le lien remplace le mot de passe, jamais le second facteur ; le navigateur de confiance
+ *     remplace le second facteur, jamais le mot de passe ;
  *   - limitation par ÉCHECS, en base, par compte et par appelant ; attente, jamais de
  *     verrouillage définitif (il se retournerait contre la victime) ;
  *   - un admin ne perd jamais l'accès à son compte : l'enrôlement obligatoire vient APRÈS la
@@ -93,16 +98,19 @@ if (!function_exists('auth_duree')) {
     /** Durées réglables par constante (secondes), lues à l'appel. */
     function auth_duree(string $nom): int
     {
-        $defauts = ['AUTH_INACTIVITE' => 7200, 'AUTH_DUREE_MAX' => 43200, 'AUTH_VERIFICATION_RECENTE' => 900];
+        $defauts = ['AUTH_INACTIVITE' => 3600, 'AUTH_DUREE_MAX' => 43200, 'AUTH_VERIFICATION_RECENTE' => 900];
         return defined($nom) ? max(60, (int)constant($nom)) : $defauts[$nom];
     }
 }
 
 if (!function_exists('auth_facteurs_forts')) {
-    /** Vrai si la chaîne de facteurs (« mdp+totp », « lien+cle », « cle »…) contient un second facteur. */
+    /**
+     * Vrai si la chaîne de facteurs (« mdp+totp », « lien+cle », « mdp+confiance »…) contient un
+     * second facteur, ou la confiance d'un navigateur qui en a passé un.
+     */
     function auth_facteurs_forts(string $facteurs): bool
     {
-        return (bool)array_intersect(explode('+', $facteurs), ['totp', 'cle', 'secours']);
+        return (bool)array_intersect(explode('+', $facteurs), ['totp', 'cle', 'secours', 'confiance']);
     }
 }
 
@@ -140,18 +148,34 @@ if (!function_exists('auth_aviser')) {
 if (!function_exists('auth_premier_facteur')) {
     /**
      * Premier facteur passé ($facteur : « mdp » ou « lien ») : ouvre la session, ou la met en
-     * attente du second facteur si le compte en a un. Rend « connecte » ou « second_facteur ».
-     * Un projet qui garde sa propre connexion par lien l'appelle après avoir consommé le jeton.
+     * attente du second facteur si le compte en a un — sauf depuis un navigateur de confiance de
+     * ce compte, qui l'en dispense. Rend « connecte » ou « second_facteur ». Un projet qui garde
+     * sa propre connexion par lien l'appelle après avoir consommé le jeton.
+     * $durable : sans effet depuis la 2.3 (plus de « rester connecté ») ; la confiance se
+     * demande au second facteur (auth_second_facteur).
      */
     function auth_premier_facteur(int $id, string $facteur, bool $durable = false): string
     {
         if (auth_a_second_facteur($id)) {
+            if (auth_navigateur_de_confiance($id)) {
+                auth_terminer($id, $facteur . '+confiance');
+                return 'connecte';
+            }
             demarrer_session();
-            $_SESSION['auth_en_attente'] = ['id' => $id, 'facteur' => $facteur, 'depuis' => time(), 'durable' => $durable];
+            $_SESSION['auth_en_attente'] = ['id' => $id, 'facteur' => $facteur, 'depuis' => time(), 'durable' => false];
             return 'second_facteur';
         }
-        auth_terminer($id, $facteur, $durable);
+        auth_terminer($id, $facteur);
         return 'connecte';
+    }
+}
+
+if (!function_exists('auth_navigateur_de_confiance')) {
+    /** Ce navigateur est-il de confiance pour ce compte (second facteur passé ici depuis moins de 30 jours) ? */
+    function auth_navigateur_de_confiance(int $id): bool
+    {
+        $confiance = durable_reprendre();
+        return $confiance !== null && $confiance['compte_id'] === $id && auth_facteurs_forts($confiance['facteurs']);
     }
 }
 
@@ -203,10 +227,12 @@ if (!function_exists('auth_second_facteur')) {
     /**
      * Second facteur de la connexion en attente : $mode « totp » (code de l'application),
      * « secours » (code de secours) ou « cle » ($code : la réponse JSON du navigateur, après
-     * cle_options_connexion($id)). Rend « connecte », « refus », « limite » ou « expire »
-     * (plus de connexion en attente : repasser par le premier facteur).
+     * cle_options_connexion($id)). $confiance : ce navigateur ne redemandera plus le code pendant
+     * 30 jours (case « Ne plus demander sur ce navigateur », cochée par défaut). Rend « connecte »,
+     * « refus », « limite » ou « expire » (plus de connexion en attente : repasser par le premier
+     * facteur).
      */
-    function auth_second_facteur(string $mode, string $code): string
+    function auth_second_facteur(string $mode, string $code, bool $confiance = false): string
     {
         $attente = auth_en_attente();
         if ($attente === null) return 'expire';
@@ -223,7 +249,7 @@ if (!function_exists('auth_second_facteur')) {
             journaliser('echec_second_facteur', 'utilisateur', $id);
             return 'refus';
         }
-        auth_terminer($id, $attente['facteur'] . '+' . $mode, (bool)$attente['durable']);
+        auth_terminer($id, $attente['facteur'] . '+' . $mode, $confiance);
         return 'connecte';
     }
 }
@@ -244,7 +270,8 @@ if (!function_exists('auth_facteur_verifier')) {
 if (!function_exists('auth_session_renforcer')) {
     /**
      * La personne connectée vient de prouver un second facteur hors connexion (enrôlement d'une
-     * application ou d'une clé) : sa session le compte désormais, sans le lui redemander.
+     * application ou d'une clé) : sa session le compte désormais, et ce navigateur devient de
+     * confiance — le code ne lui est pas redemandé dès la connexion suivante.
      */
     function auth_session_renforcer(int $id, string $mode): void
     {
@@ -254,6 +281,7 @@ if (!function_exists('auth_session_renforcer')) {
             $_SESSION['auth_facteurs'] = ($_SESSION['auth_facteurs'] ?? 'mdp') . '+' . $mode;
         }
         $_SESSION['auth_verifie_le'] = time();
+        durable_ouvrir($id, (string)$_SESSION['auth_facteurs']);
     }
 }
 
@@ -272,11 +300,15 @@ if (!function_exists('auth_ouvrir_session')) {
 }
 
 if (!function_exists('auth_terminer')) {
-    /** Authentification complète : session ouverte, appareil retenu si demandé, connexion journalisée. */
-    function auth_terminer(int $id, string $facteurs, bool $durable = false): void
+    /**
+     * Authentification complète : session ouverte, connexion journalisée. $confiance : ce
+     * navigateur devient de confiance — seulement si un second facteur vient d'être passé ici
+     * (pas sur la foi d'une confiance existante, qui garde son échéance).
+     */
+    function auth_terminer(int $id, string $facteurs, bool $confiance = false): void
     {
-        auth_ouvrir_session($id, $facteurs, auth_facteurs_forts($facteurs));
-        if ($durable) durable_ouvrir($id, $facteurs);
+        auth_ouvrir_session($id, $facteurs, auth_facteurs_forts($facteurs) && !str_contains($facteurs, 'confiance'));
+        if ($confiance && auth_facteurs_forts($facteurs) && !str_contains($facteurs, 'confiance')) durable_ouvrir($id, $facteurs);
         journaliser('connexion', 'utilisateur', $id, $facteurs, $id);
         if (str_contains($facteurs, 'secours')) {
             $reste = codes_secours_restants($id);
@@ -290,9 +322,9 @@ if (!function_exists('auth_terminer')) {
 if (!function_exists('auth_session_controler')) {
     /**
      * À appeler une fois par requête, avant de lire la session (dans utilisateur_courant() du
-     * projet) : ferme la session inactive depuis 2 h ou ouverte depuis 12 h, puis la reprend
-     * par le cookie « rester connecté » s'il y en a un de valable. Rend l'identifiant du compte
-     * connecté, ou 0. Une session reprise n'a pas de vérification récente (§6 de la spec).
+     * projet) : ferme la session inactive depuis 1 h ou ouverte depuis 12 h. Rend l'identifiant
+     * du compte connecté, ou 0 (se reconnecter : le mot de passe, et le code seulement hors d'un
+     * navigateur de confiance).
      */
     function auth_session_controler(): int
     {
@@ -315,37 +347,37 @@ if (!function_exists('auth_session_controler')) {
                 unset($_SESSION[$cle]);
             }
         }
-        $durable = durable_reprendre();
-        if ($durable === null) return 0;
-        auth_ouvrir_session($durable['compte_id'], $durable['facteurs'], false);
-        journaliser('connexion_durable', 'utilisateur', $durable['compte_id'], $durable['facteurs'], $durable['compte_id']);
-        return $durable['compte_id'];
+        return 0;
     }
 }
 
 if (!function_exists('auth_fermer_autres_sessions')) {
     /**
-     * Ferme toutes les sessions de ce compte (ordinaires et durables), sauf celle de la requête
-     * en cours si c'est la sienne : mot de passe changé, second facteur réinitialisé,
-     * « Déconnecter tous les appareils ». Les sessions PHP ne sont pas listées sur le serveur :
-     * on note la date, et auth_session_controler() ferme toute session ouverte avant.
+     * Ferme toutes les sessions de ce compte et retire la confiance de ses navigateurs, sauf la
+     * session et le navigateur de la requête en cours si ce sont les siens : mot de passe
+     * changé, second facteur réinitialisé, « Déconnecter tous les autres appareils ». Les
+     * sessions PHP ne sont pas listées sur le serveur : on note la date, et
+     * auth_session_controler() ferme toute session ouverte avant.
      */
     function auth_fermer_autres_sessions(int $id): void
     {
         auth_donnees($id);
         bd()->prepare('UPDATE auth_compte SET sessions_depuis = ? WHERE compte_id = ?')->execute([maintenant(), $id]);
-        durable_revoquer_tout($id);
-        if ((int)($_SESSION['utilisateur_id'] ?? 0) === $id) $_SESSION['auth_connecte_le'] = time();
+        $soi = (int)($_SESSION['utilisateur_id'] ?? 0) === $id;
+        durable_revoquer_tout($id, $soi);
+        if ($soi) $_SESSION['auth_connecte_le'] = time();
     }
 }
 
 if (!function_exists('auth_deconnecter')) {
-    /** Déconnexion (depuis un POST avec jeton CSRF) : cet appareil oublié, session détruite. */
+    /**
+     * Déconnexion (depuis un POST avec jeton CSRF) : session détruite. Le navigateur reste de
+     * confiance (le mot de passe sera redemandé, pas le code) ; on le retire dans le compte.
+     */
     function auth_deconnecter(): void
     {
         demarrer_session();
         $id = (int)($_SESSION['utilisateur_id'] ?? 0);
-        durable_fermer();
         $_SESSION = [];
         if (session_status() === PHP_SESSION_ACTIVE) session_destroy();
         if ($id > 0) journaliser('deconnexion', 'utilisateur', $id, '', $id);
@@ -386,8 +418,8 @@ if (!function_exists('auth_etat_2fa')) {
     /**
      * Où en est la session courante vis-à-vis du second facteur, pour ce compte et ce(s) rôle(s) :
      *   « ok »             rien à exiger (rôle non tenu, ou session ouverte avec second facteur) ;
-     *   « second_facteur » le compte en a un mais la session a été ouverte sans (reprise durable
-     *                      d'avant l'activation, lien seul…) : le redemander ;
+     *   « second_facteur » le compte en a un mais la session a été ouverte sans (lien seul avant
+     *                      l'activation…) : le redemander ;
      *   « grace »          aucun second facteur, délai d'enrôlement en cours : bandeau, rien de bloqué ;
      *   « enrolement »     aucun second facteur, délai dépassé : pages protégées fermées jusqu'à
      *                      l'enrôlement, qui reste ouvert (jamais de compte verrouillé).
@@ -425,7 +457,8 @@ if (!function_exists('exiger_2fa_si_obligatoire')) {
 }
 
 // ---------------------------------------------------------------------------
-// Vérification renforcée (pages très sensibles)
+// Vérification récente : sécurité du compte (mot de passe, second facteur, clés), réinitialisation
+// du second facteur d'un autre. Depuis la 2.3 (D17), plus sur les pages de données.
 // ---------------------------------------------------------------------------
 
 if (!function_exists('auth_chemin_courant')) {
@@ -438,7 +471,7 @@ if (!function_exists('auth_chemin_courant')) {
 }
 
 if (!function_exists('auth_verification_recente')) {
-    /** Un second facteur (ou, sans second facteur, le mot de passe) a-t-il été passé depuis moins de $secondes ? */
+    /** Le mot de passe ou un second facteur a-t-il été passé depuis moins de $secondes ? */
     function auth_verification_recente(?int $secondes = null): bool
     {
         $secondes ??= auth_duree('AUTH_VERIFICATION_RECENTE');
@@ -449,10 +482,9 @@ if (!function_exists('auth_verification_recente')) {
 
 if (!function_exists('exiger_verification_recente')) {
     /**
-     * En tête d'une page très sensible (santé, pièces, finances, exports, comptes) : sans
-     * vérification depuis 15 minutes, renvoie vers la page de vérification du projet, qui
-     * appelle auth_verifier() puis revient ici (auth_retour()). La fenêtre ne glisse pas :
-     * travailler sur la page ne la prolonge pas.
+     * Avant de toucher à la sécurité du compte : sans vérification depuis 15 minutes, renvoie
+     * vers la page de vérification du projet, qui appelle auth_verifier() puis revient ici
+     * (auth_retour()). La fenêtre ne glisse pas : travailler sur la page ne la prolonge pas.
      */
     function exiger_verification_recente(?int $secondes = null): void
     {
@@ -465,9 +497,9 @@ if (!function_exists('exiger_verification_recente')) {
 
 if (!function_exists('auth_verifier')) {
     /**
-     * Vérification renforcée de la personne connectée : $mode « totp », « secours », « cle », ou « mdp »
-     * — ce dernier seulement pour un compte SANS second facteur (une famille sur ses propres
-     * données) : qui en a un doit le passer. Rend « ok », « refus », « limite » ou « non_connecte ».
+     * Vérification récente de la personne connectée : $mode « mdp » (le mot de passe, la règle
+     * depuis la 2.3), ou « totp », « secours », « cle » (pour qui n'a pas de mot de passe). Rend
+     * « ok », « refus », « limite » ou « non_connecte ».
      */
     function auth_verifier(string $mode, string $valeur): string
     {
@@ -476,7 +508,7 @@ if (!function_exists('auth_verifier')) {
         if ($id <= 0) return 'non_connecte';
         $cle = 'verification-' . $id;
         if (echecs_depasses($cle, 5, 900)) return 'limite';
-        $ok = $mode === 'mdp' ? !auth_a_second_facteur($id) && mdp_verifier($id, $valeur)
+        $ok = $mode === 'mdp' ? mdp_verifier($id, $valeur)
                               : auth_facteur_verifier($id, $mode, $valeur);
         if (!$ok) {
             echec_noter($cle);

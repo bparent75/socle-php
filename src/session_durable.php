@@ -1,6 +1,15 @@
 <?php
 /**
- * socle-php — « Rester connecté 30 jours » : un cookie par appareil, révocable.
+ * socle-php — navigateur de confiance (2.3) : après un second facteur réussi, ce navigateur ne
+ * le redemande plus pendant 30 jours. Le premier facteur (mot de passe ou lien) reste exigé à
+ * chaque connexion : le cookie ne rouvre jamais une session à lui seul.
+ *
+ * Jusqu'à la 2.2, ce même cookie servait à « Rester connecté 30 jours » (il rouvrait la
+ * session). Règle simplifiée par Brice le 1er novembre 2026 (spécification commune, D17) :
+ * une heure d'inactivité ferme la session, et la confiance du navigateur dispense du code.
+ * Table et fonctions sont gardées telles quelles ; une ligne ouverte avant la 2.3 avec un
+ * second facteur (« mdp+totp »…) vaut confiance jusqu'à son échéance, une ligne sans ne vaut
+ * rien.
  *
  * Attend : bd(), SEL_SITE, la table auth_session_durable (voir sql/) ; facultatif,
  * NOM_COOKIE_DURABLE (à défaut : NOM_SESSION . '_durable') et DUREE_SESSION_DURABLE
@@ -10,17 +19,18 @@
  * en clair en base, retrouve la ligne ; seule l'empreinte HMAC du validateur est stockée, et
  * comparée en temps constant. Une fuite de la base ne donne donc aucun cookie valable.
  *
- * Décisions (spécification commune d'octobre 2026) :
- *   - durée ABSOLUE de 30 jours, jamais prolongée par l'usage ;
+ * Décisions (spécification commune d'octobre 2026, D17 de novembre) :
+ *   - durée ABSOLUE de 30 jours, comptée depuis le code, jamais prolongée par l'usage ;
  *   - le validateur est renouvelé au plus une fois par 24 h (pas à chaque requête : deux
  *     onglets ouverts en même temps se déconnecteraient l'un l'autre) ;
  *   - un validateur faux sur un sélecteur connu = cookie volé ou copié : la ligne est
  *     supprimée et la personne prévenue ;
- *   - la ligne retient les facteurs de la connexion d'origine (« mdp », « mdp+totp »…) : une
- *     session reprise sans second facteur ne satisfait pas un rôle qui y est tenu, et aucune
- *     reprise ne vaut vérification récente ;
- *   - toutes les lignes d'un compte tombent au changement de mot de passe, de second facteur,
- *     à la désactivation, ou sur « Déconnecter tous les appareils ».
+ *   - la ligne retient les facteurs de la connexion d'origine (« mdp+totp »…) : seule une ligne
+ *     ouverte avec un second facteur vaut confiance ;
+ *   - la déconnexion ne retire pas la confiance (c'est tout son intérêt) ; « Retirer » dans la
+ *     liste du compte, si ;
+ *   - les lignes des autres navigateurs tombent au changement de mot de passe ou de second
+ *     facteur, toutes à la désactivation et à la réinitialisation par un admin.
  */
 declare(strict_types=1);
 
@@ -82,9 +92,14 @@ if (!function_exists('durable_appareil')) {
 }
 
 if (!function_exists('durable_ouvrir')) {
-    /** Retient cet appareil pour ce compte (30 jours), avec les facteurs de la connexion. */
+    /**
+     * Ce navigateur devient de confiance pour ce compte (30 jours), avec les facteurs prouvés.
+     * Une seule confiance par navigateur : celle qu'il portait déjà (même pour un autre compte)
+     * est remplacée.
+     */
     function durable_ouvrir(int $id, string $facteurs): void
     {
+        durable_fermer();
         $selecteur = jeton_aleatoire(16);
         $validateur = jeton_aleatoire(32);
         $expire = time() + durable_duree();
@@ -101,9 +116,9 @@ if (!function_exists('durable_ouvrir')) {
 
 if (!function_exists('durable_reprendre')) {
     /**
-     * Le cookie de cet appareil désigne-t-il une session durable valable ? Rend
+     * Le cookie de ce navigateur désigne-t-il une confiance valable ? Rend
      * ['compte_id' => …, 'facteurs' => …] (cookie renouvelé au besoin), ou null (cookie effacé).
-     * N'ouvre pas la session : voir auth_session_controler().
+     * N'ouvre pas la session : voir auth_premier_facteur().
      */
     function durable_reprendre(): ?array
     {
@@ -127,10 +142,10 @@ if (!function_exists('durable_reprendre')) {
             bd()->prepare('DELETE FROM auth_session_durable WHERE id = ?')->execute([(int)$ligne['id']]);
             durable_cookie_poser('', 0);
             journaliser('session_durable_volee', 'utilisateur', $id, (string)$ligne['appareil']);
-            auth_aviser($id, 'Connexion durable interrompue',
-                "Un cookie de connexion de votre compte (" . $ligne['appareil'] . ") a été présenté avec une clé "
-                . "fausse : il a peut-être été copié. Cette connexion a été fermée par précaution ; vous pouvez "
-                . "simplement vous reconnecter.");
+            auth_aviser($id, 'Navigateur de confiance retiré',
+                "Le cookie d'un navigateur de confiance de votre compte (" . $ligne['appareil'] . ") a été présenté "
+                . "avec une clé fausse : il a peut-être été copié. Ce navigateur n'est plus de confiance par "
+                . "précaution ; le code de double authentification y sera simplement redemandé.");
             return null;
         }
         $compte = auth_compte($id);
@@ -156,7 +171,7 @@ if (!function_exists('durable_reprendre')) {
 }
 
 if (!function_exists('durable_fermer')) {
-    /** Oublie cet appareil (déconnexion) : sa ligne est supprimée, le cookie effacé. */
+    /** Ce navigateur n'est plus de confiance : sa ligne est supprimée, le cookie effacé. */
     function durable_fermer(): void
     {
         $brut = (string)($_COOKIE[durable_nom_cookie()] ?? '');
@@ -168,7 +183,7 @@ if (!function_exists('durable_fermer')) {
 }
 
 if (!function_exists('durables_lister')) {
-    /** Les appareils restés connectés de ce compte, du plus récent au plus ancien (page Sécurité). */
+    /** Les navigateurs de confiance de ce compte, du plus récent au plus ancien (page Sécurité). */
     function durables_lister(int $id): array
     {
         $req = bd()->prepare('SELECT id, appareil, facteurs, cree_le, expire_le, derniere_utilisation
@@ -180,7 +195,7 @@ if (!function_exists('durables_lister')) {
 }
 
 if (!function_exists('durable_revoquer')) {
-    /** « Déconnecter cet appareil » : une ligne, et seulement si elle appartient bien à ce compte. */
+    /** « Retirer » un navigateur de confiance : une ligne, et seulement si elle appartient bien à ce compte. */
     function durable_revoquer(int $ligne, int $id): void
     {
         bd()->prepare('DELETE FROM auth_session_durable WHERE id = ? AND compte_id = ?')->execute([$ligne, $id]);
@@ -189,11 +204,16 @@ if (!function_exists('durable_revoquer')) {
 }
 
 if (!function_exists('durable_revoquer_tout')) {
-    /** Toutes les sessions durables du compte (mot de passe changé, facteur changé, compte désactivé…). */
-    function durable_revoquer_tout(int $id): void
+    /**
+     * Tous les navigateurs de confiance du compte (mot de passe ou facteur changé, compte
+     * désactivé…) ; $sauf_celui_ci : sauf le navigateur de la requête, quand c'est la personne
+     * elle-même qui agit.
+     */
+    function durable_revoquer_tout(int $id, bool $sauf_celui_ci = false): void
     {
-        $req = bd()->prepare('DELETE FROM auth_session_durable WHERE compte_id = ?');
-        $req->execute([$id]);
+        $selecteur = $sauf_celui_ci ? explode(':', (string)($_COOKIE[durable_nom_cookie()] ?? ''))[0] : '';
+        $req = bd()->prepare('DELETE FROM auth_session_durable WHERE compte_id = ? AND selecteur <> ?');
+        $req->execute([$id, $selecteur]);
         if ($req->rowCount() > 0) journaliser('session_durable_revoquee', 'utilisateur', $id, 'toutes');
     }
 }

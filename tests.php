@@ -761,8 +761,8 @@ verifie('adresse otpauth complète',
         && str_contains($uri_totp, 'digits=6') && str_contains($uri_totp, 'period=30'));
 
 // ---------------------------------------------------------------------------
-// Authentification (2.2) : mot de passe, second facteur du compte, rester connecté,
-// second facteur obligatoire, vérification renforcée. Comptes : la table utilisateur
+// Authentification (2.2, règles simplifiées en 2.3) : mot de passe, second facteur du compte,
+// navigateur de confiance, second facteur obligatoire, vérification récente. Comptes : la table utilisateur
 // du socle (AUTH_TABLE_COMPTES par défaut). Aucun appel réseau (AUTH_VERIFIER_FUITES).
 // ---------------------------------------------------------------------------
 define('CLE_CHIFFREMENT', bin2hex(random_bytes(32)));
@@ -835,6 +835,9 @@ if (!function_exists('openssl_encrypt')) {
     $codes = totp_enroler($c1, $s, totp_code($s, $p - 1)) ?? [];
     verifie('enrôlement pendant la session : elle compte le second facteur, rien à redemander',
             $_SESSION['auth_facteurs'] === 'mdp+totp' && auth_verification_recente() && auth_etat_2fa($c1, 'admin') === 'ok');
+    verifie('… et ce navigateur devient de confiance', ($_COOKIE[durable_nom_cookie()] ?? '') !== ''
+            && count(durables_lister($c1)) === 1);
+    durable_fermer();
     verifie('enrôlement confirmé : dix codes de secours, une fois', count($codes) === 10
             && preg_match('/^[A-HJ-NP-Z2-9]{5}-[A-HJ-NP-Z2-9]{5}$/', $codes[0]) === 1 && auth_a_second_facteur($c1));
     verifie('… secret chiffré en base',
@@ -848,13 +851,29 @@ if (!function_exists('openssl_encrypt')) {
     verifie('code du pas déjà servi à l’enrôlement : refusé (anti-rejeu)',
             auth_second_facteur('totp', totp_code($s, $p - 1)) === 'refus');
     verifie('code du moment : connecté, mdp+totp, vérification récente',
-            auth_second_facteur('totp', totp_code($s, $p)) === 'connecte' && ($_SESSION['utilisateur_id'] ?? 0) === $c1
+            auth_second_facteur('totp', totp_code($s, $p), true) === 'connecte' && ($_SESSION['utilisateur_id'] ?? 0) === $c1
             && $_SESSION['auth_facteurs'] === 'mdp+totp' && auth_verification_recente());
     $cookie_durable = $_COOKIE[durable_nom_cookie()] ?? '';
-    verifie('« rester connecté » demandé au mot de passe : appareil retenu', $cookie_durable !== '');
+    verifie('« ne plus demander sur ce navigateur » : navigateur de confiance', $cookie_durable !== '');
+    $nouvelle_requete();
+    verifie('navigateur de confiance : le mot de passe suffit, sans code ni vérification récente',
+            auth_mot_de_passe('mdp@example.org', 'un autre mot de passe assez long') === 'connecte'
+            && $_SESSION['auth_facteurs'] === 'mdp+confiance' && !auth_verification_recente()
+            && auth_etat_2fa($c1, 'admin') === 'ok');
+    verifie('… sans prolonger la confiance', count(durables_lister($c1)) === 1);
+    $nouvelle_requete();
+    verifie('… le mot de passe, lui, reste exigé',
+            auth_mot_de_passe('mdp@example.org', 'pas le bon mot de passe') === 'refus' && !isset($_SESSION['utilisateur_id']));
+    $nouvelle_requete();
+    unset($_COOKIE[durable_nom_cookie()]);
+    auth_mot_de_passe('mdp@example.org', 'un autre mot de passe assez long');
+    verifie('case décochée : connecté, navigateur pas retenu',
+            auth_second_facteur('totp', totp_code($s, $p + 1)) === 'connecte' && !isset($_COOKIE[durable_nom_cookie()])
+            && count(durables_lister($c1)) === 1);
+    bd()->exec("UPDATE auth_compte SET totp_dernier_pas = $p WHERE compte_id = $c1");   // le pas p+1 resservira plus bas
     $nouvelle_requete();
     auth_premier_facteur($c1, 'lien');
-    verifie('le lien ne remplace pas le second facteur', !isset($_SESSION['utilisateur_id']) && auth_en_attente() !== null);
+    verifie('le lien ne remplace pas le second facteur (hors navigateur de confiance)', !isset($_SESSION['utilisateur_id']) && auth_en_attente() !== null);
     verifie('même code rejoué : refusé', auth_second_facteur('totp', totp_code($s, $p)) === 'refus');
     verifie('code de secours, saisi en minuscules avec espace : connecté',
             auth_second_facteur('secours', strtolower(str_replace('-', ' ', $codes[0]))) === 'connecte'
@@ -884,7 +903,7 @@ if (!function_exists('openssl_encrypt')) {
             && $avis('Codes de connexion refusés') === 1);
     bd()->exec("DELETE FROM tentative WHERE cle LIKE 'second-facteur-%'");
 
-    titre('Rester connecté (2.2)');
+    titre('Navigateur de confiance (2.3)');
     [$selecteur, $validateur] = explode(':', $cookie_durable) + ['', ''];
     $ligne = bd()->query("SELECT * FROM auth_session_durable WHERE compte_id = $c1")->fetch();
     verifie('une ligne par appareil, validateur haché, 30 jours, facteurs retenus',
@@ -894,12 +913,12 @@ if (!function_exists('openssl_encrypt')) {
     verifie('cookie préfixé __Host- en HTTPS', str_starts_with(durable_nom_cookie(), '__Host-'));
     $nouvelle_requete();
     $_COOKIE[durable_nom_cookie()] = $cookie_durable;
-    verifie('nouvelle visite : session reprise, sans vérification récente',
-            auth_session_controler() === $c1 && $_SESSION['auth_facteurs'] === 'mdp+totp' && !auth_verification_recente());
-    verifie('… un rôle tenu au second facteur l’accepte (ouverte avec)', auth_etat_2fa($c1, 'admin') === 'ok');
-    $_SESSION['auth_activite_le'] = time() - 7201;
-    unset($_COOKIE[durable_nom_cookie()]);
-    verifie('2 h d’inactivité sans cookie durable : session fermée',
+    verifie('le cookie seul ne rouvre aucune session (plus de « rester connecté »)', auth_session_controler() === 0);
+    auth_terminer($c1, 'mdp+totp');
+    $_SESSION['auth_activite_le'] = time() - 3500;
+    verifie('59 minutes d’inactivité : session gardée', auth_session_controler() === $c1);
+    $_SESSION['auth_activite_le'] = time() - 3601;
+    verifie('une heure d’inactivité : session fermée, même sur un navigateur de confiance',
             auth_session_controler() === 0 && !isset($_SESSION['utilisateur_id']));
     $_COOKIE[durable_nom_cookie()] = $selecteur . ':' . jeton_aleatoire(32);
     verifie('validateur faux juste après le renouvellement (autre onglet) : refus discret',
@@ -913,7 +932,7 @@ if (!function_exists('openssl_encrypt')) {
     bd()->exec("UPDATE auth_session_durable SET derniere_rotation = '2000-01-01T00:00:00Z' WHERE compte_id = $c1");
     $_COOKIE[durable_nom_cookie()] = $cookie_durable;   // l'ancien, copié ailleurs
     verifie('ancien validateur présenté plus tard : vol présumé, ligne supprimée, avis',
-            durable_reprendre() === null && $avis('Connexion durable interrompue') === 1
+            durable_reprendre() === null && $avis('Navigateur de confiance retiré') === 1
             && (int)bd()->query("SELECT COUNT(*) FROM auth_session_durable WHERE compte_id = $c1")->fetchColumn() === 0);
     durable_ouvrir($c1, 'mdp');
     bd()->exec("UPDATE auth_session_durable SET expire_le = '2000-01-01T00:00:00Z'");
@@ -924,18 +943,32 @@ if (!function_exists('openssl_encrypt')) {
     verifie('compte désactivé : refusée', durable_reprendre() === null);
     bd()->exec("UPDATE utilisateur SET actif = 1 WHERE id = $c1");
     durable_ouvrir($c1, 'mdp');
+    durable_ouvrir($c1, 'mdp+totp');
+    verifie('un navigateur ne porte qu’une confiance (la nouvelle remplace l’ancienne)', count(durables_lister($c1)) === 1);
+    verifie('confiance d’un autre compte : sans valeur pour celui-ci', !auth_navigateur_de_confiance($c1 + 1000));
     durable_ouvrir($c1, 'mdp');
-    verifie('deux appareils listés', count(durables_lister($c1)) === 2);
+    verifie('ligne ouverte sans second facteur (« rester connecté » d’avant la 2.3) : sans valeur',
+            !auth_navigateur_de_confiance($c1));
+    durable_ouvrir($c1, 'mdp+totp');
+    unset($_COOKIE[durable_nom_cookie()]);
+    durable_ouvrir($c1, 'mdp+totp');
+    verifie('deux navigateurs listés', count(durables_lister($c1)) === 2);
+    $_SESSION['utilisateur_id'] = $c1;
+    mdp_definir($c1, 'mot de passe changé par la personne');
+    verifie('mot de passe changé par la personne : les autres navigateurs perdent la confiance, pas le sien',
+            count(durables_lister($c1)) === 1 && auth_navigateur_de_confiance($c1));
     durable_fermer();
-    verifie('déconnexion : cet appareil seul oublié', count(durables_lister($c1)) === 1 && !isset($_COOKIE[durable_nom_cookie()]));
+    verifie('« Retirer » ce navigateur : plus de confiance', count(durables_lister($c1)) === 0 && !isset($_COOKIE[durable_nom_cookie()]));
     $_COOKIE[durable_nom_cookie()] = 'mal:forme';
     verifie('cookie mal formé : ignoré et effacé', durable_reprendre() === null && !isset($_COOKIE[durable_nom_cookie()]));
+    durable_ouvrir($c1, 'mdp+totp');
+    $nouvelle_requete();
     mdp_definir($c1, 'encore un autre mot de passe');
-    verifie('changement de mot de passe : tous les appareils déconnectés', count(durables_lister($c1)) === 0);
+    verifie('mot de passe changé hors de sa session : tous les navigateurs perdent la confiance', count(durables_lister($c1)) === 0);
     verifie('appareil reconnu', durable_appareil('Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Version/18.0 Mobile Safari/604.1')
             === 'Safari · iOS');
 
-    titre('Second facteur obligatoire, vérification renforcée (2.2)');
+    titre('Second facteur obligatoire, vérification récente (2.2, 2.3)');
     verifie('rôles tenus : admin par défaut', auth_role_tenu_2fa('admin') && !auth_role_tenu_2fa('equipe')
             && auth_role_tenu_2fa(['equipe', 'admin']));
     $a1 = $creer_compte('admin2fa@example.org', 'admin');
@@ -955,8 +988,10 @@ if (!function_exists('openssl_encrypt')) {
     auth_terminer($c1, 'lien');
     verifie('compte avec second facteur, session ouverte sans : à redemander', auth_etat_2fa($c1, 'admin') === 'second_facteur');
     verifie('pas de vérification récente après un lien', !auth_verification_recente());
-    verifie('vérification par mot de passe refusée à qui a un second facteur',
-            auth_verifier('mdp', 'encore un autre mot de passe') === 'refus');
+    verifie('vérification par le mot de passe, même avec un second facteur (2.3)',
+            auth_verifier('mdp', 'encore un autre mot de passe') === 'ok' && auth_verification_recente()
+            && auth_etat_2fa($c1, 'admin') === 'second_facteur');
+    unset($_SESSION['auth_verifie_le']);
     verifie('vérification par code : accordée, 15 minutes', auth_verifier('totp', totp_code($s, intdiv(time(), 30) + 1)) === 'ok'
             && auth_verification_recente() && !auth_verification_recente(-1) && auth_etat_2fa($c1, 'admin') === 'ok');
     $_SESSION['auth_verifie_le'] = time() - 901;
@@ -993,9 +1028,12 @@ if (!function_exists('openssl_encrypt')) {
     verifie('… journalisée avec l’admin qui l’a faite', (int)bd()->query("SELECT utilisateur_id FROM journal
             WHERE action = '2fa_reinitialisee' ORDER BY id DESC LIMIT 1")->fetchColumn() === $a1);
     $nouvelle_requete();
+    unset($_COOKIE[durable_nom_cookie()]);
     auth_terminer($c2, 'mdp', true);
+    verifie('sans second facteur, pas de navigateur de confiance', count(durables_lister($c2)) === 0);
+    auth_terminer($c2, 'mdp+totp', true);
     auth_deconnecter();
-    verifie('déconnexion : session vidée, appareil oublié', $_SESSION === [] && count(durables_lister($c2)) === 0);
+    verifie('déconnexion : session vidée, le navigateur reste de confiance', $_SESSION === [] && count(durables_lister($c2)) === 1);
 }
 
 titre('Clés d’accès, WebAuthn (2.2)');

@@ -70,9 +70,9 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 | `src/qrcode.php` | `qr_svg()` : un QR code en SVG en ligne, accessible. L'encodage vient de `bacon/bacon-qr-code` |
 | `src/porte_demo.php` | Rideau par mot de passe sur un site en construction, et interdiction d'indexation |
 | `src/totp.php` | Second facteur TOTP, RFC 6238 (1.9) : secret, code à six chiffres, vérification à fenêtre ±30 s, adresse `otpauth://` à donner à `qr_svg()`. Fonctions gardées par `function_exists` tant qu'Ipesup Orientation porte sa propre copie. **2.2** : secret d'un compte chiffré (AES-256-GCM, `CLE_CHIFFREMENT`), anti-rejeu, enrôlement confirmé par un premier code, reprise d'un secret existant |
-| `src/authentification.php` | Authentification (2.2) : premier facteur (mot de passe ou lien), second facteur, session (inactivité, durée maximale), second facteur obligatoire par rôle avec délai de grâce, vérification renforcée des pages très sensibles, réinitialisation — voir plus bas |
+| `src/authentification.php` | Authentification (2.2, règles simplifiées en 2.3) : premier facteur (mot de passe ou lien), second facteur, navigateur de confiance, session (une heure d'inactivité, durée maximale), second facteur obligatoire par rôle avec délai de grâce, vérification récente pour la sécurité du compte, réinitialisation — voir plus bas |
 | `src/mot_de_passe.php` | Mot de passe (2.2) : règles (12 caractères, aucune règle de composition, fuites connues), Argon2id, vérification à durée constante |
-| `src/session_durable.php` | « Rester connecté 30 jours » (2.2) : un cookie par appareil, sélecteur / validateur, révocable |
+| `src/session_durable.php` | Navigateur de confiance (2.3 ; « rester connecté » en 2.2) : un cookie par navigateur, sélecteur / validateur, révocable, 30 jours sans code |
 | `src/codes_secours.php` | Codes de secours du second facteur (2.2) : dix codes à usage unique, hachés |
 | `src/webauthn.php` | Clés d'accès / passkeys (2.2) : enregistrement, connexion sans adresse, second facteur, vérification renforcée. Active seulement si le projet installe `web-auth/webauthn-lib` (~5.3) |
 | `actifs/webauthn.js` | Côté navigateur des clés d'accès (2.2), sans dépendance : à copier dans les actifs du projet |
@@ -181,22 +181,26 @@ projet). `dernier_admin_actif()` empêche de désactiver le dernier compte
 d'administration. Un projet à rôles multiples ou par saison garde sa propre
 implémentation : toutes ces fonctions sont gardées par `function_exists`.
 
-## Authentification : mot de passe, second facteur, rester connecté (2.2)
+## Authentification : mot de passe, second facteur, navigateur de confiance (2.2, 2.3)
 
-La cible commune des projets (spécification d'octobre 2026) : **première connexion par
-lien**, puis **mot de passe** ; **second facteur** (application TOTP ou clé d'accès, et
-codes de secours) obligatoire pour les rôles déclarés ; **« rester connecté 30 jours »** ;
-**vérification récente** (15 min) sur les pages très sensibles. Règles figées :
+La cible commune des projets (spécification d'octobre 2026, règles simplifiées en 2.3) :
+**première connexion par lien**, puis **mot de passe** ; **second facteur** (application
+TOTP ou clé d'accès, et codes de secours) obligatoire pour les rôles déclarés ; session
+fermée après **une heure d'inactivité** ; **navigateur de confiance 30 jours** : le code n'y
+est plus redemandé, le mot de passe si. Plus de « rester connecté » ni de vérification
+renforcée sur les pages : la **vérification récente** (15 min) ne garde que la sécurité du
+compte. Règles figées :
 
 - `$_SESSION['utilisateur_id']` n'est posé qu'une fois l'authentification **complète** ;
   l'état intermédiaire vit sous `auth_en_attente` (10 min). Le lien remplace le mot de passe,
-  jamais le second facteur.
+  jamais le second facteur ; le navigateur de confiance remplace le second facteur, jamais le
+  mot de passe.
 - Limitation par **échecs**, en base, par compte et par appelant (`echecs_depasses()`,
   `echec_noter()`), avec attente : jamais de verrouillage définitif.
 - Un admin n'est jamais verrouillé dehors : l'enrôlement obligatoire vient après la
   connexion, avec un délai de grâce (`param('auth_echeance_2fa')`, 7 jours à défaut).
 - Avis par courriel : mot de passe changé, second facteur activé, retiré ou réinitialisé,
-  code de secours utilisé, échecs répétés, cookie durable présenté avec une fausse clé.
+  code de secours utilisé, échecs répétés, cookie de confiance présenté avec une fausse clé.
 
 Indépendant de la table des comptes : le projet la déclare, tout le reste va dans les
 tables `auth_*` (voir `sql/`).
@@ -207,8 +211,8 @@ tables `auth_*` (voir `sql/`).
 | `ROLES_2FA_OBLIGATOIRE` | Rôles tenus au second facteur (`['admin']` à défaut) |
 | `CLE_CHIFFREMENT` | 64 caractères hexadécimaux, dans `secrets.php`, **distincte de `SEL_SITE`** : chiffre les secrets TOTP |
 | `AUTH_URL_SECOND_FACTEUR`, `AUTH_URL_ENROLEMENT`, `AUTH_URL_VERIFICATION` | Pages du projet (`/second-facteur.php`, `/securite.php`, `/verification.php` à défaut) |
-| `AUTH_INACTIVITE`, `AUTH_DUREE_MAX`, `AUTH_VERIFICATION_RECENTE` | 2 h, 12 h, 15 min à défaut (secondes) |
-| `DUREE_SESSION_DURABLE`, `NOM_COOKIE_DURABLE` | 30 jours ; `NOM_SESSION . '_durable'` (préfixé `__Host-` en HTTPS) |
+| `AUTH_INACTIVITE`, `AUTH_DUREE_MAX`, `AUTH_VERIFICATION_RECENTE` | 1 h (2 h jusqu'à la 2.2), 12 h, 15 min à défaut (secondes) |
+| `DUREE_SESSION_DURABLE`, `NOM_COOKIE_DURABLE` | Navigateur de confiance : 30 jours ; `NOM_SESSION . '_durable'` (préfixé `__Host-` en HTTPS). Noms gardés de la 2.2 |
 | `AUTH_VERIFIER_FUITES` | `false` pour ne pas interroger Have I Been Pwned (tests, poste sans réseau) |
 | `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINES` | Hôte des clés d'accès et origines admises (l'hôte et l'origine d'`URL_BASE` à défaut). Une clé est liée à l'hôte : changer de domaine les perd |
 
@@ -216,23 +220,25 @@ Connexion type :
 
 ```php
 // Dans utilisateur_courant() du projet, une fois par requête :
-$id = auth_session_controler();      // inactivité, durée maximale, reprise par le cookie durable
+$id = auth_session_controler();      // une heure d'inactivité, 12 h au plus
 
 // Formulaire adresse + mot de passe :
 verifier_csrf();
-$r = auth_mot_de_passe($_POST['courriel'], $_POST['mdp'], isset($_POST['durable']));
-// « connecte » | « second_facteur » (→ page du code) | « refus » | « limite »
+$r = auth_mot_de_passe($_POST['courriel'], $_POST['mdp']);
+// « connecte » (navigateur de confiance, ou pas de second facteur) | « second_facteur »
+// (→ page du code) | « refus » | « limite »
 
 // Lien du courriel : la page affiche un bouton ; au POST seulement (antivirus de messagerie) :
 $id = lien_magique_utiliser($_POST['jeton']);   // ou la consommation propre au projet
-if ($id !== null) $r = auth_premier_facteur($id, 'lien', $durable);
+if ($id !== null) $r = auth_premier_facteur($id, 'lien');
 
-// Page du code : auth_second_facteur('totp' | 'secours', $code), puis auth_retour().
+// Page du code, case « Ne plus demander sur ce navigateur pendant 30 jours » cochée par défaut :
+$r = auth_second_facteur('totp' | 'secours', $code, isset($_POST['confiance']));   // puis auth_retour()
 
 // En tête d'une page d'admin :
 exiger_2fa_si_obligatoire($u['id'], $u['role']);
-// En tête d'une page très sensible (santé, pièces, finances, exports, comptes) :
-exiger_verification_recente();       // la page de vérification appelle auth_verifier()
+// Avant de toucher à la sécurité du compte (mot de passe, second facteur, clés) :
+exiger_verification_recente();       // la page de vérification appelle auth_verifier('mdp', …)
 ```
 
 Clés d'accès (`composer require "web-auth/webauthn-lib:~5.3"`, le moteur de
@@ -247,13 +253,13 @@ est installée (`require-dev`) ; sans elle, la section est ignorée.
 
 Enrôlement : montrer `qr_svg(totp_uri($courriel, $secret, MARQUE_NOM))` avec
 `$secret = totp_secret_nouveau()` gardé en session, puis `totp_enroler($id, $secret, $code)`
-rend les dix codes de secours à afficher **une seule fois**. Page Sécurité :
-`mdp_erreur()` / `mdp_definir()`, `codes_secours_generer()`, `durables_lister()`,
-`durable_revoquer()`, `auth_fermer_autres_sessions()` (« Déconnecter tous les autres
-appareils » : sessions ordinaires comprises, la date est notée par compte et
-`auth_session_controler()` ferme toute session plus ancienne ; appelée aussi au changement
-de mot de passe et à la réinitialisation). Perte de tous les facteurs : `auth_reinitialiser_2fa($id, $admin)`
-(un autre admin, après sa propre vérification renforcée) ou une commande serveur du
+rend les dix codes de secours à afficher **une seule fois** ; ce navigateur devient de
+confiance. Page Sécurité : `mdp_erreur()` / `mdp_definir()`, `codes_secours_generer()`,
+`durables_lister()` et `durable_revoquer()` (navigateurs de confiance), `auth_fermer_autres_sessions()`
+(« Déconnecter les autres appareils » : sessions ouvertes et confiance des autres navigateurs,
+la date est notée par compte et `auth_session_controler()` ferme toute session plus
+ancienne ; appelée aussi au changement de mot de passe et à la réinitialisation). Perte de tous les facteurs : `auth_reinitialiser_2fa($id, $admin)`
+(un autre admin, après sa propre vérification récente) ou une commande serveur du
 projet pour le dernier admin — jamais un simple courriel. Migration d'un secret déjà
 enrôlé en clair : `totp_reprendre_secret()`, personne n'a à rescanner.
 

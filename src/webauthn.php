@@ -256,12 +256,12 @@ if (!function_exists('auth_cle_acces')) {
      * autoremplissage du champ adresse). Rend « connecte », « refus » ou « limite » (30 essais
      * par quart d'heure et par appelant : une signature ne se devine pas, on ménage le serveur).
      */
-    function auth_cle_acces(string $reponse, bool $durable = false): string
+    function auth_cle_acces(string $reponse, bool $confiance = false): string
     {
         if (!limiter('cle-ip-' . empreinte_appelant(), 30, 900)) return 'limite';
         $id = cle_verifier($reponse);
         if ($id === null) return 'refus';
-        auth_terminer($id, 'cle', $durable);
+        auth_terminer($id, 'cle', $confiance);
         return 'connecte';
     }
 }
@@ -302,7 +302,7 @@ if (!function_exists('cle_retirer')) {
         $sup = bd()->prepare('DELETE FROM auth_cle_acces WHERE id = ? AND compte_id = ?');
         $sup->execute([$ligne, $id]);
         if ($sup->rowCount() !== 1) return false;
-        durable_revoquer_tout($id);
+        durable_revoquer_tout($id, true);
         journaliser('2fa_retiree', 'utilisateur', $id, 'cle', $id);
         auth_aviser($id, 'Clé d’accès retirée', "Une clé d’accès vient d’être retirée de votre compte.");
         return true;

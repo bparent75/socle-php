@@ -160,7 +160,8 @@ if (!function_exists('totp_enroler')) {
      * Active l'application d'authentification du compte, une fois le premier code vérifié
      * ($secret : celui montré en QR code, gardé en session d'ici là). Rend les dix codes de
      * secours si c'est le PREMIER second facteur du compte (à montrer une fois), [] sinon,
-     * ou null si le code est faux. Les sessions durables du compte sont fermées.
+     * ou null si le code est faux. Les autres navigateurs du compte perdent leur confiance ; celui-ci
+     * la gagne (auth_session_renforcer).
      */
     function totp_enroler(int $id, string $secret, string $code): ?array
     {
@@ -209,7 +210,7 @@ if (!function_exists('totp_retirer')) {
         if ($tenu && (int)$cles->fetchColumn() === 0) return false;
         bd()->prepare('UPDATE auth_compte SET totp_chiffre = NULL, totp_actif_le = NULL, totp_dernier_pas = NULL
                        WHERE compte_id = ?')->execute([$id]);
-        durable_revoquer_tout($id);
+        durable_revoquer_tout($id, true);
         journaliser('2fa_retiree', 'utilisateur', $id, 'totp', $id);
         auth_aviser($id, 'Double authentification retirée',
             "L'application d'authentification de votre compte vient d'être retirée.");
