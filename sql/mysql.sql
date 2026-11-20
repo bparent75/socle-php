@@ -145,5 +145,6 @@ CREATE TABLE IF NOT EXISTS auth_session_durable (
     expire_le            VARCHAR(20) NOT NULL,
     derniere_utilisation VARCHAR(20),
     derniere_rotation    VARCHAR(20) NOT NULL,
+    inactivite           INT NULL,              -- 2.5 : « rester connecté » (secondes) ; NULL = confiance
     INDEX idx_auth_session_durable (compte_id)
 );

@@ -21,7 +21,10 @@
  *   - ROLES_2FA_OBLIGATOIRE : rôles tenus au second facteur (['admin'] à défaut) ;
  *   - facultatif : AUTH_URL_SECOND_FACTEUR, AUTH_URL_ENROLEMENT, AUTH_URL_VERIFICATION (pages
  *     du projet, URL_BASE . '/second-facteur.php', '/securite.php', '/verification.php' à défaut),
- *     AUTH_INACTIVITE (3600 s), AUTH_DUREE_MAX (43200 s), AUTH_VERIFICATION_RECENTE (900 s).
+ *     AUTH_INACTIVITE (3600 s), AUTH_DUREE_MAX (43200 s), AUTH_VERIFICATION_RECENTE (900 s) ;
+ *   - facultatif (2.5, D18) : AUTH_RESTER_CONNECTE, la case « Rester connecté » rôle par rôle,
+ *     ['admin' => [inactivité, durée maximale], '*' => […]] en secondes (voir auth_rester_politique()) ;
+ *     AUTH_COLONNE_ROLE (« role » à défaut). Sans cette constante, la case est sans effet (D17).
  *
  * Règles figées ici :
  *   - la clé de session « utilisateur_id » n'est posée qu'une fois l'authentification COMPLÈTE :
@@ -103,6 +106,25 @@ if (!function_exists('auth_duree')) {
     }
 }
 
+if (!function_exists('auth_rester_politique')) {
+    /**
+     * « Rester connecté » pour ce compte (2.5, D18) : [inactivité, durée maximale] en secondes, selon
+     * son rôle dans AUTH_RESTER_CONNECTE (clé '*' pour les autres rôles), ou null — option non déclarée,
+     * ou rôle sans entrée : la case ne fait rien et la session suit AUTH_INACTIVITE / AUTH_DUREE_MAX.
+     */
+    function auth_rester_politique(int $id): ?array
+    {
+        if (!defined('AUTH_RESTER_CONNECTE')) return null;
+        $compte = auth_compte($id);
+        $role = (string)($compte[defined('AUTH_COLONNE_ROLE') ? (string)AUTH_COLONNE_ROLE : 'role'] ?? '');
+        $regles = (array)AUTH_RESTER_CONNECTE;
+        $p = $regles[$role] ?? $regles['*'] ?? null;
+        if (!is_array($p) || count($p) < 2) return null;
+        $inactivite = max(60, (int)$p[0]);
+        return [$inactivite, max($inactivite, (int)$p[1])];
+    }
+}
+
 if (!function_exists('auth_facteurs_forts')) {
     /**
      * Vrai si la chaîne de facteurs (« mdp+totp », « lien+cle », « mdp+confiance »…) contient un
@@ -151,21 +173,23 @@ if (!function_exists('auth_premier_facteur')) {
      * attente du second facteur si le compte en a un — sauf depuis un navigateur de confiance de
      * ce compte, qui l'en dispense. Rend « connecte » ou « second_facteur ». Un projet qui garde
      * sa propre connexion par lien l'appelle après avoir consommé le jeton.
-     * $durable : sans effet depuis la 2.3 (plus de « rester connecté ») ; la confiance se
-     * demande au second facteur (auth_second_facteur).
+     * $durable : case « Rester connecté » (2.5, D18) ; sans effet si le projet ne déclare pas
+     * AUTH_RESTER_CONNECTE. Avec un second facteur, elle attend la fin de la connexion (et
+     * auth_second_facteur() la reprend à défaut d'autre choix). La confiance du navigateur se
+     * demande au second facteur.
      */
     function auth_premier_facteur(int $id, string $facteur, bool $durable = false): string
     {
         if (auth_a_second_facteur($id)) {
             if (auth_navigateur_de_confiance($id)) {
-                auth_terminer($id, $facteur . '+confiance');
+                auth_terminer($id, $facteur . '+confiance', false, $durable);
                 return 'connecte';
             }
             demarrer_session();
-            $_SESSION['auth_en_attente'] = ['id' => $id, 'facteur' => $facteur, 'depuis' => time(), 'durable' => false];
+            $_SESSION['auth_en_attente'] = ['id' => $id, 'facteur' => $facteur, 'depuis' => time(), 'durable' => $durable];
             return 'second_facteur';
         }
-        auth_terminer($id, $facteur);
+        auth_terminer($id, $facteur, false, $durable);
         return 'connecte';
     }
 }
@@ -228,11 +252,12 @@ if (!function_exists('auth_second_facteur')) {
      * Second facteur de la connexion en attente : $mode « totp » (code de l'application),
      * « secours » (code de secours) ou « cle » ($code : la réponse JSON du navigateur, après
      * cle_options_connexion($id)). $confiance : ce navigateur ne redemandera plus le code pendant
-     * 30 jours (case « Ne plus demander sur ce navigateur », cochée par défaut). Rend « connecte »,
+     * 30 jours (case « Ne plus demander sur ce navigateur », cochée par défaut). $rester : « Rester
+     * connecté » (2.5) ; null : le choix fait au premier facteur. Rend « connecte »,
      * « refus », « limite » ou « expire » (plus de connexion en attente : repasser par le premier
      * facteur).
      */
-    function auth_second_facteur(string $mode, string $code, bool $confiance = false): string
+    function auth_second_facteur(string $mode, string $code, bool $confiance = false, ?bool $rester = null): string
     {
         $attente = auth_en_attente();
         if ($attente === null) return 'expire';
@@ -249,7 +274,7 @@ if (!function_exists('auth_second_facteur')) {
             journaliser('echec_second_facteur', 'utilisateur', $id);
             return 'refus';
         }
-        auth_terminer($id, $attente['facteur'] . '+' . $mode, $confiance);
+        auth_terminer($id, $attente['facteur'] . '+' . $mode, $confiance, $rester ?? !empty($attente['durable']));
         return 'connecte';
     }
 }
@@ -291,7 +316,7 @@ if (!function_exists('auth_ouvrir_session')) {
     {
         demarrer_session();
         if (session_status() === PHP_SESSION_ACTIVE && !headers_sent()) session_regenerate_id(true);
-        unset($_SESSION['auth_en_attente']);
+        unset($_SESSION['auth_en_attente'], $_SESSION['auth_appareil']);
         $_SESSION['utilisateur_id'] = $id;
         $_SESSION['auth_facteurs'] = $facteurs;
         $_SESSION['auth_connecte_le'] = $_SESSION['auth_activite_le'] = time();
@@ -303,12 +328,15 @@ if (!function_exists('auth_terminer')) {
     /**
      * Authentification complète : session ouverte, connexion journalisée. $confiance : ce
      * navigateur devient de confiance — seulement si un second facteur vient d'être passé ici
-     * (pas sur la foi d'une confiance existante, qui garde son échéance).
+     * (pas sur la foi d'une confiance existante, qui garde son échéance). $rester : « Rester
+     * connecté » (2.5), selon auth_rester_politique() ; sans politique, rien.
      */
-    function auth_terminer(int $id, string $facteurs, bool $confiance = false): void
+    function auth_terminer(int $id, string $facteurs, bool $confiance = false, bool $rester = false): void
     {
         auth_ouvrir_session($id, $facteurs, auth_facteurs_forts($facteurs) && !str_contains($facteurs, 'confiance'));
         if ($confiance && auth_facteurs_forts($facteurs) && !str_contains($facteurs, 'confiance')) durable_ouvrir($id, $facteurs);
+        $politique = $rester ? auth_rester_politique($id) : null;
+        if ($politique !== null) $_SESSION['auth_appareil'] = appareil_ouvrir($id, $facteurs, $politique[0], $politique[1]);
         journaliser('connexion', 'utilisateur', $id, $facteurs, $id);
         if (str_contains($facteurs, 'secours')) {
             $reste = codes_secours_restants($id);
@@ -325,6 +353,11 @@ if (!function_exists('auth_session_controler')) {
      * projet) : ferme la session inactive depuis 1 h ou ouverte depuis 12 h. Rend l'identifiant
      * du compte connecté, ou 0 (se reconnecter : le mot de passe, et le code seulement hors d'un
      * navigateur de confiance).
+     *
+     * « Rester connecté » (2.5, D18) : une session ouverte avec la case vaut ce que vaut sa ligne
+     * (appareil_controler() : durée d'inactivité et échéance du rôle, « Retirer » la ferme) ; sans
+     * session, le cookie de l'appareil la rouvre (mêmes facteurs qu'à l'ouverture, sans vérification
+     * récente).
      */
     function auth_session_controler(): int
     {
@@ -338,16 +371,26 @@ if (!function_exists('auth_session_controler')) {
             $depuis = bd()->prepare('SELECT sessions_depuis FROM auth_compte WHERE compte_id = ?');
             $depuis->execute([$id]);
             $depuis = (string)$depuis->fetchColumn();
-            if ($t - $activite <= auth_duree('AUTH_INACTIVITE') && $t - $debut <= auth_duree('AUTH_DUREE_MAX')
-                && ($depuis === '' || $debut >= (int)strtotime($depuis))) {
+            $appareil = (int)($_SESSION['auth_appareil'] ?? 0);
+            $valable = $appareil > 0 ? appareil_controler($appareil, $id)
+                : $t - $activite <= auth_duree('AUTH_INACTIVITE') && $t - $debut <= auth_duree('AUTH_DUREE_MAX');
+            if ($valable && ($depuis === '' || $debut >= (int)strtotime($depuis))) {
                 $_SESSION['auth_activite_le'] = $t;
                 return $id;
             }
-            foreach (['utilisateur_id', 'auth_facteurs', 'auth_connecte_le', 'auth_activite_le', 'auth_verifie_le'] as $cle) {
+            foreach (['utilisateur_id', 'auth_facteurs', 'auth_connecte_le', 'auth_activite_le', 'auth_verifie_le',
+                      'auth_appareil'] as $cle) {
                 unset($_SESSION[$cle]);
             }
         }
-        return 0;
+        if (!defined('AUTH_RESTER_CONNECTE') || isset($_SESSION['auth_en_attente'])) return 0;
+        $ligne = appareil_reprendre();
+        if ($ligne === null) return 0;
+        $id = (int)$ligne['compte_id'];
+        auth_ouvrir_session($id, (string)$ligne['facteurs'], false);
+        $_SESSION['auth_appareil'] = (int)$ligne['id'];
+        journaliser('connexion_appareil', 'utilisateur', $id, (string)$ligne['facteurs'], $id);
+        return $id;
     }
 }
 
@@ -378,6 +421,7 @@ if (!function_exists('auth_deconnecter')) {
     {
         demarrer_session();
         $id = (int)($_SESSION['utilisateur_id'] ?? 0);
+        appareil_fermer();   // « rester connecté » s'arrête ici ; la confiance du navigateur, non
         $_SESSION = [];
         if (session_status() === PHP_SESSION_ACTIVE) session_destroy();
         if ($id > 0) journaliser('deconnexion', 'utilisateur', $id, '', $id);
@@ -444,8 +488,9 @@ if (!function_exists('exiger_2fa_si_obligatoire')) {
         $etat = auth_etat_2fa($id, $roles);
         if ($etat === 'ok' || $etat === 'grace') return;
         if ($etat === 'second_facteur') {
+            // Session rouverte par un appareil sans second facteur : le code passé, l'appareil le retient.
             $_SESSION['auth_en_attente'] = ['id' => $id, 'facteur' => (string)($_SESSION['auth_facteurs'] ?? 'lien'),
-                                            'depuis' => time(), 'durable' => false];
+                                            'depuis' => time(), 'durable' => !empty($_SESSION['auth_appareil'])];
             unset($_SESSION['utilisateur_id']);
             $_SESSION['auth_retour'] = auth_chemin_courant();
             header('Location: ' . (defined('AUTH_URL_SECOND_FACTEUR') ? (string)AUTH_URL_SECOND_FACTEUR : URL_BASE . '/second-facteur.php'));

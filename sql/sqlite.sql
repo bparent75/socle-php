@@ -143,6 +143,7 @@ CREATE TABLE IF NOT EXISTS auth_session_durable (
     cree_le              TEXT NOT NULL,
     expire_le            TEXT NOT NULL,
     derniere_utilisation TEXT,
-    derniere_rotation    TEXT NOT NULL
+    derniere_rotation    TEXT NOT NULL,
+    inactivite           INTEGER                -- 2.5 : « rester connecté » (secondes) ; NULL = confiance
 );
 CREATE INDEX IF NOT EXISTS idx_auth_session_durable ON auth_session_durable(compte_id);

@@ -1036,6 +1036,124 @@ if (!function_exists('openssl_encrypt')) {
     verifie('déconnexion : session vidée, le navigateur reste de confiance', $_SESSION === [] && count(durables_lister($c2)) === 1);
 }
 
+titre('Rester connecté, rôle par rôle (2.5, D18)');
+$nouvelle_requete();
+$oublier = function () { foreach ([durable_nom_cookie(), appareil_nom_cookie()] as $n) unset($_COOKIE[$n]); };
+$oublier();
+$appareils = fn (int $id): array => bd()->query("SELECT * FROM auth_session_durable WHERE inactivite IS NOT NULL AND compte_id = $id")->fetchAll();
+$il_y_a = fn (int $s): string => gmdate('Y-m-d\TH:i:s\Z', time() - $s);
+$e1 = $creer_compte('reste@example.org', 'equipe');
+$mdp_e1 = 'la phrase de passe de l’équipe';
+mdp_definir($e1, $mdp_e1);
+verifie('option non déclarée : la case ne fait rien (D17)', auth_mot_de_passe('reste@example.org', $mdp_e1, true) === 'connecte'
+        && !isset($_SESSION['auth_appareil']) && !isset($_COOKIE[appareil_nom_cookie()]) && $appareils($e1) === []);
+define('AUTH_RESTER_CONNECTE', ['admin' => [5 * 3600, 12 * 3600], '*' => [30 * 86400, 90 * 86400]]);
+verifie('politique : par rôle, « * » pour les autres', auth_rester_politique($e1) === [30 * 86400, 90 * 86400]);
+$nouvelle_requete();
+$ok = auth_mot_de_passe('reste@example.org', $mdp_e1, true) === 'connecte';
+$l = $appareils($e1)[0] ?? [];
+verifie('équipe, case cochée : appareil retenu, 30 jours d’inactivité, 90 au plus', $ok && (int)($_SESSION['auth_appareil'] ?? 0) === (int)($l['id'] ?? -1)
+        && (int)$l['inactivite'] === 30 * 86400 && abs(strtotime($l['expire_le']) - time() - 90 * 86400) < 5
+        && isset($_COOKIE[appareil_nom_cookie()]) && !isset($_COOKIE[durable_nom_cookie()]));
+$_SESSION['auth_activite_le'] = time() - 2 * 3600;
+$_SESSION['auth_connecte_le'] = time() - 13 * 3600;
+verifie('… deux heures sans rien, treize depuis la connexion : la session tient', auth_session_controler() === $e1);
+$nouvelle_requete();   // navigateur fermé : la session PHP est perdue, le cookie de l’appareil reste
+verifie('navigateur rouvert : la session est rouverte par l’appareil, sans vérification récente',
+        auth_session_controler() === $e1 && $_SESSION['auth_facteurs'] === 'mdp' && (int)$_SESSION['auth_appareil'] === (int)$l['id']
+        && !auth_verification_recente());
+bd()->exec("UPDATE auth_session_durable SET derniere_utilisation = '" . $il_y_a(31 * 86400) . "' WHERE id = " . (int)$l['id']);
+verifie('… plus de 30 jours sans servir : la session se ferme', auth_session_controler() === 0);
+$nouvelle_requete();
+verifie('… et l’appareil ne rouvre plus rien (ligne et cookie effacés)', auth_session_controler() === 0
+        && !isset($_COOKIE[appareil_nom_cookie()]) && $appareils($e1) === []);
+auth_mot_de_passe('reste@example.org', $mdp_e1, true);
+bd()->exec("UPDATE auth_session_durable SET derniere_utilisation = '" . $il_y_a(29 * 86400) . "' WHERE compte_id = $e1");
+verifie('glissant : 29 jours sans servir, la session tient et l’usage est noté', auth_session_controler() === $e1
+        && ($appareils($e1)[0]['derniere_utilisation'] ?? '') > $il_y_a(60));
+bd()->exec("UPDATE auth_session_durable SET expire_le = '2000-01-01T00:00:00Z' WHERE compte_id = $e1");
+verifie('au bout de 90 jours, même servi chaque jour : fermée', auth_session_controler() === 0);
+$nouvelle_requete();
+$oublier();
+auth_mot_de_passe('reste@example.org', $mdp_e1, false);
+$_SESSION['auth_activite_le'] = time() - 3601;
+verifie('case décochée : une heure d’inactivité, comme avant', !isset($_SESSION['auth_appareil']) && auth_session_controler() === 0);
+
+$a3 = $creer_compte('admin-reste@example.org', 'admin');
+$mdp_a3 = 'la phrase de passe de l’administrateur';
+mdp_definir($a3, $mdp_a3);
+$nouvelle_requete();
+$oublier();
+$ok = auth_mot_de_passe('admin-reste@example.org', $mdp_a3, true) === 'connecte';
+$l = $appareils($a3)[0] ?? [];
+verifie('admin, case cochée : cinq heures d’inactivité, douze au plus', $ok && (int)$l['inactivite'] === 5 * 3600
+        && abs(strtotime($l['expire_le']) - time() - 12 * 3600) < 5);
+bd()->exec("UPDATE auth_session_durable SET derniere_utilisation = '" . $il_y_a(4 * 3600) . "' WHERE compte_id = $a3");
+$_SESSION['auth_activite_le'] = time() - 4 * 3600;
+verifie('… quatre heures d’atelier sans toucher au portail : la session tient', auth_session_controler() === $a3);
+bd()->exec("UPDATE auth_session_durable SET derniere_utilisation = '" . $il_y_a(5 * 3600 + 60) . "' WHERE compte_id = $a3");
+verifie('… cinq heures : fermée', auth_session_controler() === 0);
+
+$nouvelle_requete();
+$oublier();
+auth_mot_de_passe('reste@example.org', $mdp_e1, true);
+durable_revoquer((int)$_SESSION['auth_appareil'], $e1);
+verifie('« Retirer » l’appareil depuis le compte : la session se ferme aussitôt', auth_session_controler() === 0);
+$nouvelle_requete();
+auth_mot_de_passe('reste@example.org', $mdp_e1, true);
+auth_deconnecter();
+verifie('déconnexion : l’appareil ne rouvre plus rien', !isset($_COOKIE[appareil_nom_cookie()]) && $appareils($e1) === []
+        && auth_session_controler() === 0);
+$nouvelle_requete();
+auth_mot_de_passe('reste@example.org', $mdp_e1, true);
+$cookie_a = $_COOKIE[appareil_nom_cookie()];
+$nouvelle_requete();
+$oublier();
+auth_mot_de_passe('reste@example.org', $mdp_e1, true);   // un second appareil
+auth_fermer_autres_sessions($e1);
+verifie('« Déconnecter mes autres appareils » : le sien reste, l’autre part', count($appareils($e1)) === 1
+        && (int)$appareils($e1)[0]['id'] === (int)$_SESSION['auth_appareil'] && auth_session_controler() === $e1);
+$nouvelle_requete();
+$_COOKIE[appareil_nom_cookie()] = $cookie_a;
+verifie('… l’autre ne rouvre plus rien', auth_session_controler() === 0);
+$nouvelle_requete();
+$oublier();
+auth_mot_de_passe('reste@example.org', $mdp_e1, true);
+[$sel] = explode(':', (string)$_COOKIE[appareil_nom_cookie()]);
+bd()->exec("UPDATE auth_session_durable SET derniere_rotation = '2000-01-01T00:00:00Z' WHERE selecteur = " . bd()->quote($sel));
+$nouvelle_requete();
+$_COOKIE[appareil_nom_cookie()] = $sel . ':' . jeton_aleatoire(32);
+verifie('cookie d’appareil à la clé fausse : appareil déconnecté, personne prévenue', auth_session_controler() === 0
+        && (int)bd()->query('SELECT COUNT(*) FROM auth_session_durable WHERE selecteur = ' . bd()->quote($sel))->fetchColumn() === 0
+        && $avis('Appareil déconnecté') === 1);
+$nouvelle_requete();
+$oublier();
+auth_terminer($e1, 'mdp+totp', true);
+$_COOKIE[appareil_nom_cookie()] = $_COOKIE[durable_nom_cookie()];
+verifie('une confiance présentée comme appareil ne rouvre rien', ($_SESSION = []) === [] && auth_session_controler() === 0);
+$oublier();
+
+if (function_exists('openssl_encrypt')) {
+    $sa = totp_secret_nouveau();
+    $nouvelle_requete();
+    auth_terminer($a3, 'mdp');
+    totp_enroler($a3, $sa, totp_code($sa, intdiv(time(), 30) - 1));
+    $nouvelle_requete();
+    $oublier();
+    $r1 = auth_mot_de_passe('admin-reste@example.org', $mdp_a3, true);
+    $r2 = auth_second_facteur('totp', totp_code($sa, intdiv(time(), 30)));
+    verifie('avec un code : la case du premier écran est reprise, l’appareil retient les deux facteurs',
+            $r1 === 'second_facteur' && $r2 === 'connecte' && ($appareils($a3)[0]['facteurs'] ?? '') === 'mdp+totp');
+    $nouvelle_requete();
+    verifie('… rouverte : le code n’est pas redemandé', auth_session_controler() === $a3 && auth_etat_2fa($a3, 'admin') === 'ok');
+    $nouvelle_requete();
+    $oublier();
+    bd()->exec("DELETE FROM auth_session_durable WHERE compte_id = $a3");
+    auth_mot_de_passe('admin-reste@example.org', $mdp_a3, true);
+    auth_second_facteur('totp', totp_code($sa, intdiv(time(), 30) + 1), false, false);
+    verifie('… case décochée à l’écran du code : rien de retenu', $appareils($a3) === [] && !isset($_SESSION['auth_appareil']));
+}
+
 titre('Clés d’accès, WebAuthn (2.2)');
 if (!function_exists('webauthn_disponible') || !webauthn_disponible() || !function_exists('openssl_pkey_new')) {
     echo "  (ignoré : web-auth/webauthn-lib n'est pas installé — lancer composer install)\n";

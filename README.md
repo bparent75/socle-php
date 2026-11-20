@@ -73,7 +73,7 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 | `src/totp.php` | Second facteur TOTP, RFC 6238 (1.9) : secret, code à six chiffres, vérification à fenêtre ±30 s, adresse `otpauth://` à donner à `qr_svg()`. Fonctions gardées par `function_exists` tant qu'Ipesup Orientation porte sa propre copie. **2.2** : secret d'un compte chiffré (AES-256-GCM, `CLE_CHIFFREMENT`), anti-rejeu, enrôlement confirmé par un premier code, reprise d'un secret existant |
 | `src/authentification.php` | Authentification (2.2, règles simplifiées en 2.3) : premier facteur (mot de passe ou lien), second facteur, navigateur de confiance, session (une heure d'inactivité, durée maximale), second facteur obligatoire par rôle avec délai de grâce, vérification récente pour la sécurité du compte, réinitialisation — voir plus bas |
 | `src/mot_de_passe.php` | Mot de passe (2.2) : règles (12 caractères, aucune règle de composition, fuites connues), Argon2id, vérification à durée constante |
-| `src/session_durable.php` | Navigateur de confiance (2.3 ; « rester connecté » en 2.2) : un cookie par navigateur, sélecteur / validateur, révocable, 30 jours sans code |
+| `src/session_durable.php` | Navigateur de confiance (2.3 ; « rester connecté » en 2.2) : un cookie par navigateur, sélecteur / validateur, révocable, 30 jours sans code ; « rester connecté » par rôle en option (2.5, `appareil_*`) |
 | `src/codes_secours.php` | Codes de secours du second facteur (2.2) : dix codes à usage unique, hachés |
 | `src/webauthn.php` | Clés d'accès / passkeys (2.2) : enregistrement, connexion sans adresse, second facteur, vérification renforcée. Active seulement si le projet installe `web-auth/webauthn-lib` (~5.3) |
 | `actifs/webauthn.js` | Côté navigateur des clés d'accès (2.2), sans dépendance : à copier dans les actifs du projet |
@@ -184,7 +184,7 @@ projet). `dernier_admin_actif()` empêche de désactiver le dernier compte
 d'administration. Un projet à rôles multiples ou par saison garde sa propre
 implémentation : toutes ces fonctions sont gardées par `function_exists`.
 
-## Authentification : mot de passe, second facteur, navigateur de confiance (2.2, 2.3)
+## Authentification : mot de passe, second facteur, navigateur de confiance (2.2, 2.3, 2.5)
 
 La cible commune des projets (spécification d'octobre 2026, règles simplifiées en 2.3) :
 **première connexion par lien**, puis **mot de passe** ; **second facteur** (application
@@ -192,7 +192,8 @@ TOTP ou clé d'accès, et codes de secours) obligatoire pour les rôles déclar�
 fermée après **une heure d'inactivité** ; **navigateur de confiance 30 jours** : le code n'y
 est plus redemandé, le mot de passe si. Plus de « rester connecté » ni de vérification
 renforcée sur les pages : la **vérification récente** (15 min) ne garde que la sécurité du
-compte. Règles figées :
+compte. **« Rester connecté » revient en option en 2.5** (D18, 20 novembre 2026), rôle par rôle :
+voir plus bas. Règles figées :
 
 - `$_SESSION['utilisateur_id']` n'est posé qu'une fois l'authentification **complète** ;
   l'état intermédiaire vit sous `auth_en_attente` (10 min). Le lien remplace le mot de passe,
@@ -216,6 +217,7 @@ tables `auth_*` (voir `sql/`).
 | `AUTH_URL_SECOND_FACTEUR`, `AUTH_URL_ENROLEMENT`, `AUTH_URL_VERIFICATION` | Pages du projet (`/second-facteur.php`, `/securite.php`, `/verification.php` à défaut) |
 | `AUTH_INACTIVITE`, `AUTH_DUREE_MAX`, `AUTH_VERIFICATION_RECENTE` | 1 h (2 h jusqu'à la 2.2), 12 h, 15 min à défaut (secondes) |
 | `DUREE_SESSION_DURABLE`, `NOM_COOKIE_DURABLE` | Navigateur de confiance : 30 jours ; `NOM_SESSION . '_durable'` (préfixé `__Host-` en HTTPS). Noms gardés de la 2.2 |
+| `AUTH_RESTER_CONNECTE`, `AUTH_COLONNE_ROLE` | **2.5, facultatif.** Case « Rester connecté » par rôle : `['admin' => [5 * 3600, 12 * 3600], '*' => [30 * 86400, 90 * 86400]]` = [inactivité, durée maximale] en secondes ; colonne du rôle (`role` à défaut). Sans la constante, la case ne fait rien (D17). Exige la colonne `auth_session_durable.inactivite` (voir plus bas) |
 | `AUTH_VERIFIER_FUITES` | `false` pour ne pas interroger Have I Been Pwned (tests, poste sans réseau) |
 | `WEBAUTHN_RP_ID`, `WEBAUTHN_ORIGINES` | Hôte des clés d'accès et origines admises (l'hôte et l'origine d'`URL_BASE` à défaut). Une clé est liée à l'hôte : changer de domaine les perd |
 
@@ -243,6 +245,19 @@ exiger_2fa_si_obligatoire($u['id'], $u['role']);
 // Avant de toucher à la sécurité du compte (mot de passe, second facteur, clés) :
 exiger_verification_recente();       // la page de vérification appelle auth_verifier('mdp', …)
 ```
+
+« Rester connecté » (2.5, option) : le troisième argument de `auth_mot_de_passe()` et de
+`auth_premier_facteur()` est la case ; `auth_second_facteur()` la reprend à défaut d'un
+quatrième argument (`$rester`). Avec `AUTH_RESTER_CONNECTE`, l'appareil est retenu dans
+`auth_session_durable` (colonne `inactivite` non nulle, cookie `NOM_SESSION . '_appareil'`,
+distinct de celui de la confiance) : la session tient tant que l'appareil sert au moins une fois
+par durée d'inactivité, jusqu'à la durée maximale, **même navigateur fermé** (le cookie la
+rouvre, avec les facteurs d'origine, sans vérification récente). La session vaut ce que vaut sa
+ligne : « Retirer » (`durable_revoquer()`), mot de passe changé, « Déconnecter les autres
+appareils » la ferment aussitôt ; la déconnexion arrête l'appareil, pas la confiance du
+navigateur. Mise à niveau d'un projet qui active l'option :
+`ALTER TABLE auth_session_durable ADD COLUMN inactivite INT NULL`. Un projet qui ne l'active
+pas n'a rien à faire : la colonne n'est jamais nommée.
 
 Clés d'accès (`composer require "web-auth/webauthn-lib:~5.3"`, le moteur de
 `laravel/passkeys`) : la page envoie au navigateur `cle_options_creation($id, $courriel)`
