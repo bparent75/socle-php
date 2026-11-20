@@ -1,6 +1,6 @@
 {
     "name": "bparent75/socle-php",
-    "description": "Briques PHP réutilisables : formats français, sécurité, connexion par lien magique ou mot de passe, second facteur TOTP et codes de secours, « rester connecté », file de courriels et avis de non-remise, journal d'audit, surveillance du cron, formulaires, images, QR code.",
+    "description": "Briques PHP réutilisables : formats français, sécurité, connexion par lien magique ou mot de passe, second facteur TOTP et codes de secours, « rester connecté », file de courriels et avis de non-remise, journal d'audit, surveillance du cron, formulaires, images, QR code, texte enrichi (mini éditeur).",
     "type": "library",
     "license": "MIT",
     "require": {
@@ -13,6 +13,7 @@
         "ext-imap": "Lecture des avis de non-remise (src/rebonds.php)",
         "ext-gd": "Image téléversée : contrôle, réencodage et redimensionnement (src/image.php)",
         "ext-exif": "Image téléversée : redressement des photos de téléphone selon leur drapeau d'orientation",
+        "ext-dom": "Texte enrichi : nettoyage du HTML du mini éditeur (src/texte_enrichi.php)",
         "web-auth/webauthn-lib": "Clés d'accès (passkeys) : src/webauthn.php, inactive sans lui (~5.3)"
     },
     "require-dev": {
@@ -41,7 +42,8 @@
             "src/mot_de_passe.php",
             "src/session_durable.php",
             "src/codes_secours.php",
-            "src/webauthn.php"
+            "src/webauthn.php",
+            "src/texte_enrichi.php"
         ]
     }
 }

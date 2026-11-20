@@ -42,6 +42,7 @@ les briques standard passent par Composer :
 | Mise en page des courriels | `src/courriel.php` (2.2) — examinés : MJML (exige Node à l'envoi, ou son API distante, qui recevrait le contenu des messages), Foundation for Emails / Inky (étape de construction, plus maintenu), `pelago/emogrifier` et `tijsverkoyen/css-to-inline-styles` (ils mettent des styles en ligne, ce que le gabarit fait déjà, sans rien apporter à la mise en page). Laravel garde son thème Markdown (qui s'appuie sur `css-to-inline-styles`) |
 | Second facteur TOTP | `src/totp.php` (1.9) — soixante lignes éprouvées sur Ipesup Orientation ; `spomky-labs/otphp` ajouterait trois paquets pour le même service |
 | Tableur | `phpoffice/phpspreadsheet` |
+| Nettoyage d'un HTML saisi | `src/texte_enrichi.php` (2.4) pour un texte court (gras, italique, listes) : une liste blanche de sept balises **sans aucun attribut**, lisible d'un coup d'œil ; `symfony/html-sanitizer` ou HTMLPurifier pour un contenu plus riche (liens, images, tableaux) |
 
 N'ajoutez ici que ce qui n'a pas d'équivalent, et dites pourquoi dans l'en-tête du fichier.
 
@@ -76,6 +77,8 @@ laisse à `bacon/bacon-qr-code` toute l'arithmétique et ne garde que le rendu S
 | `src/codes_secours.php` | Codes de secours du second facteur (2.2) : dix codes à usage unique, hachés |
 | `src/webauthn.php` | Clés d'accès / passkeys (2.2) : enregistrement, connexion sans adresse, second facteur, vérification renforcée. Active seulement si le projet installe `web-auth/webauthn-lib` (~5.3) |
 | `actifs/webauthn.js` | Côté navigateur des clés d'accès (2.2), sans dépendance : à copier dans les actifs du projet |
+| `src/texte_enrichi.php` | Texte enrichi court (2.4) : `texte_enrichi_nettoyer()` réduit le HTML reçu à p, br, strong, em, ul, ol, li sans attribut, `texte_enrichi_html()` le montre (ou met en forme un ancien texte brut), `texte_enrichi_vide()` — voir plus bas |
+| `actifs/mini-editeur.js`, `actifs/mini-editeur.css` | Mini éditeur (2.4) : un `<textarea data-mini-editeur>` devient une zone avec gras, italique, listes ; sans dépendance, à copier dans les actifs du projet |
 | `sql/` | Les tables dont ces briques ont besoin, en SQLite et en MySQL |
 
 Chaque fichier indique en tête ce qu'il attend de l'application hôte (fonction `bd()`,
@@ -308,6 +311,42 @@ photo redressée selon son drapeau EXIF ; nom tiré au hasard. `image_enregistre
 même travail sur un fichier déjà présent (import, tests). Les inscriptions ont leur propre
 `image_televersee()`, d'où un autre nom ici.
 
+## Texte enrichi et mini éditeur (2.4)
+
+Pour un texte court que l'équipe met en forme — compte rendu de séance, note, consigne —
+sans traitement de texte. Écrit pour Libris le 20 novembre 2026, générique dès l'origine.
+
+```php
+$html = texte_enrichi_nettoyer($_POST['compte_rendu'] ?? '');   // à l'enregistrement ; '' si rien de lisible
+echo '<div class="texte-enrichi">' . texte_enrichi_html($valeur) . '</div>';   // à l'affichage, sans h()
+echo '<textarea id="cr" name="compte_rendu" data-mini-editeur placeholder="…">'
+   . h(texte_enrichi_html($valeur)) . '</textarea>';                            // dans le formulaire
+```
+
+**Le serveur seul protège.** Le script du navigateur n'est qu'un confort : la valeur reçue
+est réduite à `p`, `br`, `strong`, `em`, `ul`, `ol`, `li` **sans aucun attribut** (ni lien,
+ni style, ni classe), reconstruite nœud par nœud, le texte échappé ; script, style, SVG,
+cadres, images et formulaires partent avec leur contenu, une balise inconnue est défaite et
+son texte gardé. Renettoyée à l'affichage par `texte_enrichi_html()`, qui accepte aussi un
+texte brut saisi avant l'éditeur (une ligne = un paragraphe, des lignes « - » = une liste).
+Extension `dom` requise (présente dans toute installation courante de PHP).
+
+**L'éditeur** : barre Gras, Italique, Liste à puces, Liste numérotée, Effacer la mise en
+forme ; ⌘B / Ctrl+B, ⌘I / Ctrl+I ; « - » puis espace ouvre une liste, « 1. » une liste
+numérotée ; collage en texte brut. Sans JavaScript, le textarea sert tel quel. Les deux
+fichiers d'`actifs/` se copient dans le projet, par exemple dans `deploy.sh` après
+`composer install` :
+
+```bash
+for f in mini-editeur.js mini-editeur.css; do
+    cmp -s "vendor/bparent75/socle-php/actifs/$f" "actifs/$f" || cp "vendor/bparent75/socle-php/actifs/$f" "actifs/$f"
+done
+```
+
+Couleurs lues dans les variables CSS de la page (`--bord`, `--carte`, `--surface`, `--encre`,
+`--encre-douce`, `--titre`, `--lien`, `--bleu-clair`, `--bleu-pale`), avec repli ; un projet
+aux jetons nommés autrement les relie sur `.mini-editeur` sans toucher au fichier.
+
 ## Harnais de vérification locale : `outils/` (2.0)
 
 Pour les postes sans PHP (PHP-WASM). Publié une fois ici, au lieu de trois copies
@@ -333,12 +372,13 @@ php tests.php                           # sur un poste avec PHP
 node outils/executer-cli.mjs tests.php  # sans PHP (PHP-WASM, voir ci-dessus)
 ```
 
-236 contrôles (228 sans `bacon/bacon-qr-code`) sur une base SQLite en mémoire : formats, signatures, limitation des
+336 contrôles sans `bacon/bacon-qr-code` ni `web-auth/webauthn-lib` (davantage avec eux) sur une base SQLite en mémoire : formats, signatures, limitation des
 tentatives, unicité et annulation dans la file, garde-fou d'envoi en session SSH,
 échappement et habillage du gabarit (boutons, encadrés, images intégrées), avis de non-remise (analyse, gravité,
 rapprochement, boîte simulée), bornage du journal, porte de démonstration, paramètres,
 migrations additives, connexion par lien magique, export CSV, liens révocables, iCal,
-surveillance du cron, messages flash, validation de formulaire, image téléversée, TOTP, QR code.
+surveillance du cron, messages flash, validation de formulaire, image téléversée, TOTP, authentification,
+clés d'accès, texte enrichi, QR code.
 Aucun courriel envoyé ; seules quelques images d'essai sont écrites dans le répertoire temporaire, puis effacées.
 
 ## Provenance

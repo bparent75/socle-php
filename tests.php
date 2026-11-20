@@ -32,7 +32,7 @@ foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as 
 if (!function_exists('h')) {
     foreach (['formats', 'securite', 'bd', 'parametres', 'connexion', 'courriel', 'rebonds',
               'journal', 'cron', 'flash', 'validation', 'image', 'csv', 'ical', 'porte_demo', 'totp',
-              'authentification', 'mot_de_passe', 'session_durable', 'codes_secours'] as $brique) {
+              'authentification', 'mot_de_passe', 'session_durable', 'codes_secours', 'texte_enrichi'] as $brique) {
         require __DIR__ . "/src/$brique.php";
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
@@ -1149,6 +1149,44 @@ if (!function_exists('webauthn_disponible') || !webauthn_disponible() || !functi
     verifie('compte non tenu : retrait accepté', cle_retirer($ligne_cle, $k, false) && cles_lister($k) === []
             && !auth_a_second_facteur($k));
 }
+
+titre('Texte enrichi, mini éditeur (2.4)');
+$te_piege = '<div onclick="x()"><b style="color:red">Gras</b> et <i>penché</i> <a href="javascript:alert(1)">lien</a></div>'
+          . '<script>alert(1)</script><style>p{}</style><img src=x onerror=alert(1)><ul><li class="a">un</li><li>deux &amp; trois</li></ul>'
+          . '<h2>Titre</h2><p><br></p><p>&lt;script&gt; reste du texte</p><!-- note -->';
+$te_net = texte_enrichi_nettoyer($te_piege);
+verifie('gras, italique et listes gardés, sans aucun attribut ; script, style, image, lien et commentaire retirés',
+        $te_net === '<p><strong>Gras</strong> et <em>penché</em> lien</p><ul><li>un</li><li>deux &amp; trois</li></ul>'
+                  . '<p><strong>Titre</strong></p><p>&lt;script&gt; reste du texte</p>'
+        && !preg_match('/\s[a-z-]+=|<(script|style|img|a)\b|alert/i', $te_net));
+verifie('SVG, MathML, cadres et formulaires retirés avec leur contenu ; balise inconnue défaite, son texte gardé',
+        texte_enrichi_nettoyer('<div>a<svg><script>alert(1)</script><text>s</text></svg><math><mi>m</mi></math>'
+                               . '<iframe src="//x"></iframe><form><input value="v"><button>b</button></form>'
+                               . '<span title="t">b</span><font color="red">c</font></div>') === '<p>abc</p>');
+verifie('attribut glissé dans une balise gardée : retiré, imbrication conservée',
+        texte_enrichi_nettoyer('<p onmouseover="x()" class="c">a <b id="i"><i style="s">b</i></b></p><ol start="9"><li value="3">c</li></ol>')
+        === '<p>a <strong><em>b</em></strong></p><ol><li>c</li></ol>');
+verifie('du balisage écrit en texte reste du texte échappé',
+        texte_enrichi_nettoyer('<p>&lt;img src=x onerror=alert(1)&gt; &quot;guillemets&quot; l&#39;apostrophe</p>')
+        === '<p>&lt;img src=x onerror=alert(1)&gt; &quot;guillemets&quot; l&apos;apostrophe</p>');
+verifie('vide quand il ne reste aucun texte, accents et caractères spéciaux intacts',
+        texte_enrichi_nettoyer('<p><br></p><p>&nbsp;</p><ul><li></li></ul>') === '' && texte_enrichi_nettoyer('') === ''
+        && texte_enrichi_nettoyer('<p>Œuvre « étudiée » — l’été</p>') === '<p>Œuvre « étudiée » — l’été</p>'
+        && texte_enrichi_vide('<p> </p>') && texte_enrichi_vide("<p>\u{202F}<br></p>") && !texte_enrichi_vide('<p>a</p>'));
+verifie('paragraphe qui enveloppe une liste ou un bloc (Chrome) : défait',
+        texte_enrichi_nettoyer('<p><ul><li>un</li><li>deux</li></ul></p><div><p>bloc</p></div>') === '<ul><li>un</li><li>deux</li></ul><p>bloc</p>');
+verifie('texte brut d’avant l’éditeur : lignes en paragraphes, tirets en liste, échappé',
+        texte_enrichi_html("Présentation des œuvres\nQuestion sur le commentaire\n\n- un point\n- un autre <script>")
+            === '<p>Présentation des œuvres</p><p>Question sur le commentaire</p><ul><li>un point</li><li>un autre &lt;script&gt;</li></ul>'
+        && texte_enrichi_html('<p>déjà <strong>enrichi</strong></p>') === '<p>déjà <strong>enrichi</strong></p>'
+        && texte_enrichi_html('') === '' && texte_enrichi_depuis_texte("\r\n  \r\n") === '');
+verifie('rechargé dans le textarea de l’éditeur : rien ne referme le champ',
+        !str_contains(h(texte_enrichi_html('<p>x</p></textarea><script>alert(1)</script>')), '</textarea>'));
+$te_js = (string)@file_get_contents(__DIR__ . '/actifs/mini-editeur.js');
+$te_css = (string)@file_get_contents(__DIR__ . '/actifs/mini-editeur.css');
+verifie('script et feuille de style du navigateur livrés, sans ressource distante',
+        str_contains($te_js, 'textarea[data-mini-editeur]') && str_contains($te_css, '.mini-editeur-zone')
+        && str_contains($te_css, '.texte-enrichi') && !preg_match('~https?://|@import|url\(~i', $te_js . $te_css));
 
 titre('QR code');
 if (!function_exists('qr_svg')) {
