@@ -32,7 +32,7 @@ foreach ([__DIR__ . '/vendor/autoload.php', __DIR__ . '/../../autoload.php'] as 
 if (!function_exists('h')) {
     foreach (['formats', 'securite', 'bd', 'parametres', 'connexion', 'courriel', 'rebonds',
               'journal', 'cron', 'flash', 'validation', 'image', 'csv', 'ical', 'porte_demo', 'totp',
-              'authentification', 'mot_de_passe', 'session_durable', 'codes_secours', 'texte_enrichi'] as $brique) {
+              'authentification', 'mot_de_passe', 'session_durable', 'codes_secours', 'texte_enrichi', 'vue_agenda'] as $brique) {
         require __DIR__ . "/src/$brique.php";
     }
     // qrcode.php a besoin de bacon/bacon-qr-code : sans Composer, ses contrôles sont ignorés.
@@ -1305,6 +1305,51 @@ $te_css = (string)@file_get_contents(__DIR__ . '/actifs/mini-editeur.css');
 verifie('script et feuille de style du navigateur livrés, sans ressource distante',
         str_contains($te_js, 'textarea[data-mini-editeur]') && str_contains($te_css, '.mini-editeur-zone')
         && str_contains($te_css, '.texte-enrichi') && !preg_match('~https?://|@import|url\(~i', $te_js . $te_css));
+
+titre('Vue d’agenda (2.6)');
+$va_c = vue_agenda_couloirs([
+    ['_debut' => 540, '_fin' => 600, 'id' => 'a'], ['_debut' => 570, '_fin' => 630, 'id' => 'b'], ['_debut' => 600, '_fin' => 660, 'id' => 'c'],
+    ['_debut' => 720, '_fin' => 780, 'id' => 'd'],
+]);
+$va_par = array_column($va_c, null, 'id');
+verifie('chevauchements : côte à côte dans leur seul groupe, un couloir libéré resservant',
+        $va_par['a']['couloir'] === 0 && $va_par['b']['couloir'] === 1 && $va_par['c']['couloir'] === 0
+        && $va_par['a']['couloirs'] === 2 && $va_par['c']['couloirs'] === 2 && $va_par['d']['couloirs'] === 1 && $va_par['d']['couloir'] === 0);
+$va_s = vue_agenda_periode('semaine', '2026-12-03');
+$va_m = vue_agenda_periode('mois', '2026-12-15');
+verifie('périodes : la semaine du lundi au dimanche, le mois en semaines entières, titres en français',
+        $va_s['du'] === '2026-11-30' && $va_s['au'] === '2026-12-06' && count($va_s['jours']) === 7
+        && $va_s['titre'] === 'Semaine du 30 novembre au 6 décembre 2026' && $va_s['apres'] === '2026-12-07'
+        && $va_m['du'] === '2026-11-30' && $va_m['au'] === '2027-01-03' && $va_m['titre'] === 'Décembre 2026'
+        && vue_agenda_periode('semaine', '2027-03-03')['titre'] === 'Semaine du 1er au 7 mars 2027'
+        && vue_agenda_periode('semaine', '2026-12-30')['titre'] === 'Semaine du 28 décembre 2026 au 3 janvier 2027');
+$va_html = vue_agenda_semaine([
+    ['jour' => '2026-12-01', 'debut' => '09:00', 'fin' => '10:00', 'titre' => 'Oral <b>', 'detail' => 'fiche', 'url' => '/oral?id=1&x=2', 'couleur' => '#1961AC'],
+    ['jour' => '2026-12-01', 'debut' => '09:30', 'fin' => '10:30', 'titre' => 'Libre', 'html' => '<button>Retirer</button>', 'url' => '/x'],
+    ['jour' => '2026-12-02', 'debut' => '07:00', 'fin' => '07:30', 'titre' => 'Tôt', 'couleur' => 'red'],
+    ['jour' => '2026-12-02', 'debut' => '11:00', 'fin' => '10:00', 'titre' => 'Écarté'],
+], ['aujourdhui' => '2026-12-01', 'maintenant' => '09:15', 'creer' => fn(string $j): ?string => $j === '2026-12-06' ? null : '#ajout',
+    'marques' => ['2026-12-03' => 'Fermé <motif>'], 'px_heure' => 60, 'heure_min' => 8]);
+verifie('semaine : blocs posés à leur heure, plage élargie au plus tôt, textes échappés, couleur invalide ignorée, fin avant début écartée',
+        str_contains($va_html, 'top:120px;height:58px;left:calc(0% + 2px);width:calc(50% - 4px);--c:#1961AC;')   // 9h00-10h00, à partir de 7h00
+        && str_contains($va_html, 'left:calc(50% + 2px)') && str_contains($va_html, '<span>7h00</span>') === false
+        && str_contains($va_html, '>8h00</span>') && str_contains($va_html, 'Oral &lt;b&gt;') && !str_contains($va_html, 'Oral <b>')
+        && str_contains($va_html, 'href="/oral?id=1&amp;x=2"') && !str_contains($va_html, 'Écarté') && !str_contains($va_html, '--c:red'));
+verifie('semaine : un bloc avec un bouton est une boîte dont seul le titre est un lien ; aujourd’hui, l’heure, la marque, le clic',
+        str_contains($va_html, '<div class="vue-agenda-bloc" ') && str_contains($va_html, '<a class="vue-agenda-lien" href="/x">')
+        && str_contains($va_html, '<button>Retirer</button></div>') && str_contains($va_html, 'vue-agenda-tete aujourdhui')
+        && str_contains($va_html, 'class="vue-agenda-maintenant" style="top:135px"') && str_contains($va_html, 'Fermé &lt;motif&gt;')
+        && substr_count($va_html, 'data-creer="#ajout"') === 6 && str_contains($va_html, 'data-pas="15" data-px-heure="60"'));
+$va_mois = vue_agenda_mois(array_map(fn(int $i): array => ['jour' => '2026-12-08', 'debut' => sprintf('%02d:00', 8 + $i), 'fin' => sprintf('%02d:30', 8 + $i), 'titre' => 'É' . $i], range(0, 5)),
+    ['aujourdhui' => '2026-12-08', 'mois' => '2026-12', 'lien_jour' => fn(string $j): string => '?date=' . $j, 'max' => 4]);
+verifie('mois : semaines entières, jours hors du mois estompés, quatre puces puis « + 2 autres », le 1er en exposant',
+        substr_count($va_mois, '<tr>') === 6 && str_contains($va_mois, 'class="hors passe vide"') && substr_count($va_mois, 'vue-agenda-puce') === 4
+        && str_contains($va_mois, '+ 2 autres') && str_contains($va_mois, '1<sup>er</sup>') && str_contains($va_mois, 'class="aujourdhui"'));
+$va_js = (string)@file_get_contents(__DIR__ . '/actifs/vue-agenda.js');
+$va_css = (string)@file_get_contents(__DIR__ . '/actifs/vue-agenda.css');
+verifie('script et feuille de style de l’agenda livrés, sans ressource distante',
+        str_contains($va_js, '.vue-agenda-colonne[data-creer]') && str_contains($va_js, 'showModal') && str_contains($va_css, '.vue-agenda-grille')
+        && str_contains($va_css, '.vue-agenda-maintenant') && !preg_match('~https?://|@import|url\(~i', $va_js . $va_css));
 
 titre('QR code');
 if (!function_exists('qr_svg')) {

@@ -43,7 +43,8 @@
             "src/session_durable.php",
             "src/codes_secours.php",
             "src/webauthn.php",
-            "src/texte_enrichi.php"
+            "src/texte_enrichi.php",
+            "src/vue_agenda.php"
         ]
     }
 }

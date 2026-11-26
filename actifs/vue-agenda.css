@@ -1,0 +1,69 @@
+/* socle-php — vue d'agenda (src/vue_agenda.php, actifs/vue-agenda.js, 2.6) : semaine en grille horaire, mois en tableau.
+   Couleurs lues dans les variables de la page : --bord, --carte, --fond, --encre, --encre-douce, --bleu (accent), --alerte
+   (ligne de l'heure) ; repli sur une palette sobre si la page ne les a pas. La teinte d'un événement : --c (posée par la
+   brique depuis 'couleur', ou par une classe du projet). Un projet aux jetons nommés autrement les relie sur .vue-agenda. */
+.vue-agenda { --va-bord: var(--bord, #D9E2EA); --va-carte: var(--carte, #fff); --va-fond: var(--fond, #F3F6F9);
+  --va-encre: var(--encre, #1D2B3A); --va-douce: var(--encre-douce, #55687A); --va-accent: var(--bleu, #1961AC);
+  --va-heure: var(--alerte, #D03C0E); --va-px-heure: 48px; --va-jours: 7; font-variant-numeric: tabular-nums; color: var(--va-encre); }
+
+/* ---- Semaine ---- */
+.vue-agenda-defile { overflow-x: auto; border: 1px solid var(--va-bord); border-radius: 8px; background: var(--va-carte); }
+.vue-agenda-grille { display: grid; grid-template-columns: 3.2rem repeat(var(--va-jours), minmax(6.5rem, 1fr));
+  min-width: calc(3.2rem + var(--va-jours) * 6.5rem); }
+.vue-agenda-coin, .vue-agenda-tete { position: sticky; top: 0; z-index: 4; background: var(--va-carte);
+  border-bottom: 1px solid var(--va-bord); }
+.vue-agenda-tete { padding: .45rem .5rem; border-left: 1px solid var(--va-bord); font-weight: 600; line-height: 1.2; }
+.vue-agenda-tete small { display: block; margin-top: .1rem; font-weight: 400; color: var(--va-douce); }
+.vue-agenda-tete.aujourdhui { color: var(--va-accent); box-shadow: inset 0 -3px 0 var(--va-accent); }
+.vue-agenda-heures { position: relative; }
+.vue-agenda-heures span { position: absolute; right: .4rem; transform: translateY(-.55em); font-size: .72rem; color: var(--va-douce); }
+.vue-agenda-colonne { position: relative; border-left: 1px solid var(--va-bord);
+  background-image: repeating-linear-gradient(to bottom, transparent 0 calc(var(--va-px-heure) - 1px), var(--va-bord) calc(var(--va-px-heure) - 1px) var(--va-px-heure)); }
+.vue-agenda-colonne[data-creer] { cursor: copy; }
+.vue-agenda-colonne.passe { background-color: color-mix(in srgb, var(--va-fond) 70%, transparent); }
+.vue-agenda-colonne.marque { background-color: var(--va-fond);
+  background-image: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--va-bord) 70%, transparent) 7px 8px),
+                    repeating-linear-gradient(to bottom, transparent 0 calc(var(--va-px-heure) - 1px), var(--va-bord) calc(var(--va-px-heure) - 1px) var(--va-px-heure)); }
+.vue-agenda-marque-libelle { position: relative; z-index: 1; display: block; margin: .25rem .3rem 0; font-size: .72rem; color: var(--va-douce); }
+.vue-agenda-maintenant { position: absolute; left: 0; right: 0; z-index: 3; border-top: 2px solid var(--va-heure); pointer-events: none; }
+.vue-agenda-maintenant::before { content: ""; position: absolute; left: -4px; top: -5px; width: 8px; height: 8px; border-radius: 50%; background: var(--va-heure); }
+.vue-agenda-repere { position: absolute; left: 2px; right: 2px; z-index: 3; height: calc(var(--va-px-heure) / 4); box-sizing: border-box;
+  padding: 0 .3rem; border: 1px dashed var(--va-accent); border-radius: 4px; font-size: .72rem; line-height: 1.1; color: var(--va-accent);
+  background: color-mix(in srgb, var(--va-accent) 8%, transparent); pointer-events: none; }
+
+/* ---- Un événement : bloc de la grille, puce du mois ---- */
+.vue-agenda-bloc, .vue-agenda-puce { box-sizing: border-box; color: var(--va-encre); text-decoration: none;
+  background: color-mix(in srgb, var(--c, var(--va-accent)) 14%, var(--va-carte));
+  border: 1px solid color-mix(in srgb, var(--c, var(--va-accent)) 55%, var(--va-carte)); border-radius: 5px; }
+.vue-agenda-bloc { position: absolute; z-index: 1; overflow: hidden; padding: .15rem .35rem; font-size: .78rem; line-height: 1.25;
+  container-type: size; cursor: default; }
+a.vue-agenda-bloc, .vue-agenda-lien { cursor: pointer; color: inherit; text-decoration: none; }
+.vue-agenda-bloc:hover, .vue-agenda-bloc:focus-within { z-index: 2; box-shadow: 0 2px 8px rgba(16, 34, 52, .18); }
+.vue-agenda-bloc:focus-visible, .vue-agenda-lien:focus-visible, .vue-agenda-puce:focus-visible { outline: 2px solid var(--va-accent); outline-offset: 1px; }
+.vue-agenda-heure { font-weight: 700; }
+.vue-agenda-titre { font-weight: 600; }
+.vue-agenda-detail { display: block; color: var(--va-douce); font-weight: 400; }
+.vue-agenda-bloc form { display: inline; margin: 0; }
+.vue-agenda-bloc button { margin: .1rem 0 0; padding: .05rem .4rem; min-height: 0; font-size: .72rem; }
+@container (max-height: 30px) { .vue-agenda-detail { display: none; } }
+
+/* ---- Mois ---- */
+.vue-agenda-mois table { width: 100%; table-layout: fixed; border-collapse: collapse; background: var(--va-carte); border: 1px solid var(--va-bord); }
+.vue-agenda-mois th { padding: .35rem; font-size: .78rem; font-weight: 600; color: var(--va-douce); border-bottom: 1px solid var(--va-bord); text-align: center; }
+.vue-agenda-mois th abbr { text-decoration: none; }
+.vue-agenda-mois td { height: 6rem; padding: .3rem; vertical-align: top; border: 1px solid var(--va-bord); }
+.vue-agenda-mois td[data-creer] { cursor: copy; }
+.vue-agenda-mois td.hors { opacity: .5; }
+.vue-agenda-mois td.marque { background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--va-bord) 70%, transparent) 7px 8px); }
+.vue-agenda-num { display: inline-block; min-width: 1.6rem; margin-bottom: .2rem; font-weight: 600; color: inherit; text-decoration: none; text-align: center; border-radius: 99px; }
+a.vue-agenda-num:hover { text-decoration: underline; }
+.vue-agenda-mois td.aujourdhui .vue-agenda-num { background: var(--va-accent); color: #fff; }
+.vue-agenda-puce { display: block; margin: 0 0 .15rem; padding: .05rem .3rem; overflow: hidden; font-size: .74rem; line-height: 1.3;
+  white-space: nowrap; text-overflow: ellipsis; }
+.vue-agenda-puce .vue-agenda-detail { display: none; }
+.vue-agenda-plus { display: block; font-size: .74rem; color: var(--va-douce); }
+@media (max-width: 720px) {
+  .vue-agenda-mois td { height: 4.5rem; padding: .2rem; }
+  .vue-agenda-puce .vue-agenda-titre { display: none; }
+}
+@media (prefers-reduced-motion: no-preference) { .vue-agenda-bloc { transition: box-shadow 150ms ease-out; } }

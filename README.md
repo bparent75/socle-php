@@ -362,6 +362,40 @@ Couleurs lues dans les variables CSS de la page (`--bord`, `--carte`, `--surface
 `--encre-douce`, `--titre`, `--lien`, `--bleu-clair`, `--bleu-pale`), avec repli ; un projet
 aux jetons nommés autrement les relie sur `.mini-editeur` sans toucher au fichier.
 
+## Vue d'agenda (2.6)
+
+`src/vue_agenda.php` dessine un agenda à partir des événements du projet : **une semaine en grille horaire**
+(`vue_agenda_semaine()`) et **un mois en tableau** (`vue_agenda_mois()`). Repris du calendrier d'ATEA : colonnes par
+jour, blocs posés à leur heure, chevauchements côte à côte par groupe (`vue_agenda_couloirs()`), ligne de l'heure,
+journées marquées (fermeture, vacances), en-têtes collés en haut, défilement horizontal sur un téléphone.
+
+```php
+echo vue_agenda_semaine([
+    ['jour' => '2026-12-08', 'debut' => '17:30', 'fin' => '18:00', 'titre' => 'Oral blanc', 'detail' => 'Lou F.',
+     'couleur' => '#1961AC', 'url' => 'oral.php?id=12'],
+], ['jours' => vue_agenda_periode('semaine', '2026-12-08')['jours'], 'aujourdhui' => '2026-12-08', 'maintenant' => '14:05',
+    'creer' => fn(string $jour): ?string => '#ajout']);    // un <dialog id="ajout"> rempli au clic
+```
+
+Un événement : `jour`, `debut`, `fin` (heures locales), `titre`, `detail`, `infobulle`, `classe`, `couleur` (`#RRGGBB`),
+`url`, et `html` — un fragment **déjà sûr** (un bouton, un petit formulaire) : le bloc devient alors une boîte dont seul
+le titre est un lien. Les textes sont échappés ; un jour, des heures ou une couleur invalides écartent l'événement.
+
+**Clic pour créer** (`actifs/vue-agenda.js`) : sur une colonne dont `creer` donne une cible, un repère « + 14h15 » suit la
+souris au pas choisi (`pas`, 15 minutes) ; le clic ouvre le `<dialog>` « #id » en remplissant ses champs
+`data-vue-agenda="jour|debut|fin|libelle-jour"` (la fin : le début plus `data-duree` minutes), ou mène à une adresse avec
+`heure=HH:MM`. Sans JavaScript, rien ne se crée au clic : garder un formulaire ordinaire à côté.
+
+`vue_agenda_periode('semaine'|'mois', $jour)` donne les bornes, les jours, la période précédente et la suivante et un
+titre (« Semaine du 30 novembre au 6 décembre 2026 », « Décembre 2026 »). Les deux actifs se recopient comme ceux du mini
+éditeur :
+
+```bash
+for f in mini-editeur.js mini-editeur.css vue-agenda.js vue-agenda.css; do
+    cmp -s "vendor/bparent75/socle-php/actifs/$f" "actifs/$f" || cp "vendor/bparent75/socle-php/actifs/$f" "actifs/$f"
+done
+```
+
 ## Harnais de vérification locale : `outils/` (2.0)
 
 Pour les postes sans PHP (PHP-WASM). Publié une fois ici, au lieu de trois copies
