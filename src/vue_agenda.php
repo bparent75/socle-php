@@ -1,6 +1,6 @@
 <?php
 /**
- * socle-php — vue d'agenda (2.6) : une semaine en grille horaire, un mois en tableau, sans dépendance.
+ * socle-php — vue d'agenda (2.6, 2.7) : une semaine en grille horaire, un mois en tableau, sans dépendance.
  *
  * Reprise du calendrier d'ATEA (colonnes par jour, blocs posés à leur heure, chevauchements côte à côte en « couloirs »,
  * ligne de l'heure, clic pour créer au quart d'heure avec un repère au survol), rendue générique : le projet fournit ses
@@ -12,7 +12,10 @@
  *   'titre' => texte, 'detail' => texte facultatif (seconde ligne), 'infobulle' => texte facultatif,
  *   'classe' => classes CSS ajoutées au bloc, 'couleur' => '#RRGGBB' facultatif (la teinte du bloc),
  *   'url' => lien facultatif (le bloc, ou son titre, y mène),
- *   'html' => fragment HTML ajouté au bloc, DÉJÀ SÛR (un bouton, un petit formulaire) : l'appelant l'échappe.
+ *   'html' => fragment HTML ajouté au bloc, DÉJÀ SÛR (un bouton, un petit formulaire) : l'appelant l'échappe,
+ *   'fond' => true : un bloc d'arrière-plan, pleine largeur, hors des couloirs (une disponibilité sur laquelle se posent les
+ *             rendez-vous) ; 'ouvrir' => '#id' : un clic (ou Entrée) sur le bloc ouvre ce <dialog> ; 'etirable' => true :
+ *             une poignée en bas du bloc l'étire au pas de la grille, puis ouvre son dialogue avec la nouvelle fin (2.7).
  * ]
  * Les textes sont échappés ici. Un jour, des heures ou une couleur invalides écartent l'événement.
  */
@@ -143,7 +146,17 @@ if (!function_exists('vue_agenda_bloc')) {
         $dedans = '<span class="vue-agenda-heure">' . h(vue_agenda_heure_fr(vue_agenda_hhmm($e['_debut']))) . '</span> '
                 . '<span class="vue-agenda-titre">' . h((string)($e['titre'] ?? '')) . '</span>'
                 . ((string)($e['detail'] ?? '') !== '' ? '<span class="vue-agenda-detail">' . h((string)$e['detail']) . '</span>' : '');
-        $attr = ' class="' . h($classe) . '"' . ($styles !== '' ? ' style="' . h($styles) . '"' : '') . ' title="' . h($infobulle) . '"';
+        $ouvrir = (string)($e['ouvrir'] ?? '');
+        $etirable = $style !== null && !empty($e['etirable']);
+        if (!empty($e['fond'])) $classe .= ' vue-agenda-fond';
+        if ($etirable) $classe .= ' vue-agenda-etirable';
+        $attr = ' class="' . h($classe) . '"' . ($styles !== '' ? ' style="' . h($styles) . '"' : '') . ' title="' . h($infobulle) . '"'
+              . ($style !== null ? ' data-debut="' . vue_agenda_hhmm($e['_debut']) . '" data-fin="' . vue_agenda_hhmm($e['_fin']) . '"' : '');
+        // Un bloc qui ouvre un dialogue est un bouton (clavier compris) ; sa poignée l'étire.
+        if ($ouvrir !== '') {
+            return '<div' . $attr . ' data-ouvrir="' . h($ouvrir) . '" role="button" tabindex="0" aria-haspopup="dialog">' . $dedans . $html
+                 . ($etirable ? '<span class="vue-agenda-poignee" aria-hidden="true"></span>' : '') . '</div>';
+        }
         // Un lien ne peut pas contenir de bouton ni de formulaire : avec un fragment, le bloc est une boîte et seul son titre est un lien.
         if ($url !== '' && $html === '') return '<a' . $attr . ' href="' . h($url) . '">' . $dedans . '</a>';
         if ($url !== '') $dedans = '<a class="vue-agenda-lien" href="' . h($url) . '">' . $dedans . '</a>';
@@ -204,13 +217,22 @@ if (!function_exists('vue_agenda_semaine')) {
             $cible = is_callable($creer) ? $creer($j) : null;
             $html .= '<div class="vue-agenda-colonne' . ($j === $aujourdhui ? ' aujourdhui' : '') . ($j < $aujourdhui ? ' passe' : '')
                    . (isset($marques[$j]) ? ' marque' : '') . '" style="height:' . $hauteur . 'px" data-jour="' . h($j) . '" data-libelle="' . h($libelle) . '"'
-                   . ($cible !== null && $cible !== '' ? ' data-creer="' . h($cible) . '" data-heure-min="' . $hmin . '" data-pas="' . $pas . '" data-px-heure="' . $px . '"' : '')
+                   . ($cible !== null && $cible !== '' ? ' data-creer="' . h($cible) . '"' : '')
+                   . ' data-heure-min="' . $hmin . '" data-pas="' . $pas . '" data-px-heure="' . $px . '"'
                    . ' aria-label="' . h($libelle) . '">';
             if (isset($marques[$j]) && (string)$marques[$j] !== '') $html .= '<p class="vue-agenda-marque-libelle">' . h((string)$marques[$j]) . '</p>';
             if ($j === $aujourdhui && $maintenant !== null && $maintenant >= $hmin * 60 && $maintenant <= $hmax * 60) {
                 $html .= '<div class="vue-agenda-maintenant" style="top:' . round(($maintenant - $hmin * 60) * $px_min) . 'px" aria-hidden="true"></div>';
             }
-            foreach (vue_agenda_couloirs($par_jour[$j] ?? []) as $e) {
+            // Les fonds d'abord, pleine largeur et hors des couloirs ; les autres blocs se posent dessus.
+            $fonds = array_filter($par_jour[$j] ?? [], fn(array $e): bool => !empty($e['fond']));
+            usort($fonds, fn(array $a, array $b): int => $a['_debut'] <=> $b['_debut']);
+            foreach ($fonds as $e) {
+                $top = round(($e['_debut'] - $hmin * 60) * $px_min);
+                $haut = max(18, round(($e['_fin'] - $e['_debut']) * $px_min) - 2);
+                $html .= vue_agenda_bloc($e, 'top:' . $top . 'px;height:' . $haut . 'px;left:2px;width:calc(100% - 4px);');
+            }
+            foreach (vue_agenda_couloirs(array_values(array_filter($par_jour[$j] ?? [], fn(array $e): bool => empty($e['fond'])))) as $e) {
                 $top = round(($e['_debut'] - $hmin * 60) * $px_min);
                 $haut = max(18, round(($e['_fin'] - $e['_debut']) * $px_min) - 2);
                 $largeur = 100 / $e['couloirs'];

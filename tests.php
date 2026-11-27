@@ -1351,6 +1351,22 @@ verifie('script et feuille de style de l’agenda livrés, sans ressource distan
         str_contains($va_js, '.vue-agenda-colonne[data-creer]') && str_contains($va_js, 'showModal') && str_contains($va_css, '.vue-agenda-grille')
         && str_contains($va_css, '.vue-agenda-maintenant') && !preg_match('~https?://|@import|url\(~i', $va_js . $va_css));
 
+$va_f = vue_agenda_semaine([
+    ['jour' => '2026-12-01', 'debut' => '14:00', 'fin' => '16:00', 'titre' => 'Disponible', 'fond' => true, 'ouvrir' => '#dispo-1', 'etirable' => true],
+    ['jour' => '2026-12-01', 'debut' => '14:00', 'fin' => '14:30', 'titre' => 'Oral', 'url' => '/oral?id=3'],
+    ['jour' => '2026-12-01', 'debut' => '14:10', 'fin' => '14:40', 'titre' => 'Autre'],
+], ['jours' => ['2026-12-01'], 'aujourdhui' => '2026-11-30', 'px_heure' => 60, 'heure_min' => 14, 'heure_max' => 17]);
+verifie('2.7 : un fond pleine largeur hors des couloirs, qui s’ouvre au clic (bouton au clavier) et s’étire par sa poignée',
+        str_contains($va_f, 'class="vue-agenda-bloc vue-agenda-fond vue-agenda-etirable" style="top:0px;height:118px;left:2px;width:calc(100% - 4px);"')
+        && str_contains($va_f, 'data-debut="14:00" data-fin="16:00" data-ouvrir="#dispo-1" role="button" tabindex="0"')
+        && str_contains($va_f, '<span class="vue-agenda-poignee" aria-hidden="true"></span>')
+        && str_contains($va_f, 'width:calc(50% - 4px)')   // les deux autres se partagent la largeur, le fond n'y compte pas
+        && str_contains($va_f, 'data-heure-min="14" data-pas="15" data-px-heure="60"'));   // mesures posées même sans clic pour créer
+$va_js2 = (string)@file_get_contents(__DIR__ . '/actifs/vue-agenda.js');
+verifie('2.7 : le script crée au glisser, ouvre au clic, étire par la poignée',
+        str_contains($va_js2, 'pointerdown') && str_contains($va_js2, '.vue-agenda-bloc[data-ouvrir]') && str_contains($va_js2, '.vue-agenda-etirable .vue-agenda-poignee')
+        && str_contains($va_js2, "'&fin='"));
+
 titre('QR code');
 if (!function_exists('qr_svg')) {
     echo "  (ignoré : bacon/bacon-qr-code n'est pas installé — lancer composer install)\n";
