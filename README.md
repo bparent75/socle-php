@@ -362,7 +362,7 @@ Couleurs lues dans les variables CSS de la page (`--bord`, `--carte`, `--surface
 `--encre-douce`, `--titre`, `--lien`, `--bleu-clair`, `--bleu-pale`), avec repli ; un projet
 aux jetons nommés autrement les relie sur `.mini-editeur` sans toucher au fichier.
 
-## Vue d'agenda (2.6)
+## Vue d'agenda (2.6, 2.7)
 
 `src/vue_agenda.php` dessine un agenda à partir des événements du projet : **une semaine en grille horaire**
 (`vue_agenda_semaine()`) et **un mois en tableau** (`vue_agenda_mois()`). Repris du calendrier d'ATEA : colonnes par
@@ -385,6 +385,19 @@ le titre est un lien. Les textes sont échappés ; un jour, des heures ou une co
 souris au pas choisi (`pas`, 15 minutes) ; le clic ouvre le `<dialog>` « #id » en remplissant ses champs
 `data-vue-agenda="jour|debut|fin|libelle-jour"` (la fin : le début plus `data-duree` minutes), ou mène à une adresse avec
 `heure=HH:MM`. Sans JavaScript, rien ne se crée au clic : garder un formulaire ordinaire à côté.
+
+**Modifier et étirer (2.7)** — trois clés de plus pour un événement de la semaine :
+
+- `fond` : un bloc en pleine largeur, sous les autres (une disponibilité sous les rendez-vous pris dedans). Le jour où
+  il partage la colonne, les autres événements prennent la droite (option `retrait_fonds`, 40 % par défaut) et
+  l'étiquette du fond reste lisible à gauche ;
+- `ouvrir` : « #id » d'un `<dialog>` que le bloc ouvre au clic, à Entrée ou à Espace (`role="button"`) ;
+- `etirable` : une poignée en bas du bloc l'allonge ou le raccourcit au pas de la grille (« jusqu'à 19h45 »), puis ouvre
+  son dialogue avec la nouvelle fin dans le champ `data-vue-agenda="fin"` ; l'événement `vue-agenda:etire` part aussi.
+
+Et **glisser pour créer** : sur une colonne qui porte `creer`, un glisser trace la plage (« 14h15 – 15h30 ») et remplit
+le début et la fin du dialogue (ou `heure=` et `fin=` dans l'adresse). Souris et tactile : un glisser du doigt qui fait
+défiler la page ne crée rien.
 
 `vue_agenda_periode('semaine'|'mois', $jour)` donne les bornes, les jours, la période précédente et la suivante et un
 titre (« Semaine du 30 novembre au 6 décembre 2026 », « Décembre 2026 »). Les deux actifs se recopient comme ceux du mini

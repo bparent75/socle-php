@@ -173,6 +173,7 @@ if (!function_exists('vue_agenda_semaine')) {
      *   'creer'        fn(string $jour): ?string — une adresse (le clic y mène avec « heure=HH:MM »), ou « #id » d'un <dialog>
      *                  que le script remplit et ouvre (champs data-vue-agenda="jour|debut|fin|libelle-jour") ; null : pas de clic ;
      *   'marques'      [jour => libellé] : journée hachurée et son libellé (fermeture, vacances) ;
+     *   'retrait_fonds' la part de largeur (40 %) laissée à l'étiquette des fonds un jour qui a aussi des rendez-vous ;
      *   'entete'       fn(string $jour): string — HTML sûr ajouté sous le titre d'une colonne ;
      *   'libelle'      texte de l'agenda pour les lecteurs d'écran (« Agenda de la semaine »).
      */
@@ -227,16 +228,20 @@ if (!function_exists('vue_agenda_semaine')) {
             // Les fonds d'abord, pleine largeur et hors des couloirs ; les autres blocs se posent dessus.
             $fonds = array_filter($par_jour[$j] ?? [], fn(array $e): bool => !empty($e['fond']));
             usort($fonds, fn(array $a, array $b): int => $a['_debut'] <=> $b['_debut']);
+            $autres = array_values(array_filter($par_jour[$j] ?? [], fn(array $e): bool => empty($e['fond'])));
+            // Un jour qui a des fonds ET des rendez-vous : l'étiquette du fond garde la gauche, les rendez-vous se posent à droite.
+            $retrait = $fonds !== [] && $autres !== [] ? max(0, min(80, (int)($options['retrait_fonds'] ?? 40))) : 0;
             foreach ($fonds as $e) {
                 $top = round(($e['_debut'] - $hmin * 60) * $px_min);
                 $haut = max(18, round(($e['_fin'] - $e['_debut']) * $px_min) - 2);
-                $html .= vue_agenda_bloc($e, 'top:' . $top . 'px;height:' . $haut . 'px;left:2px;width:calc(100% - 4px);');
+                $html .= vue_agenda_bloc($e, 'top:' . $top . 'px;height:' . $haut . 'px;left:2px;width:calc(100% - 4px);'
+                                             . ($retrait > 0 ? 'padding-right:calc(' . (100 - $retrait) . '% + 2px);' : ''));
             }
-            foreach (vue_agenda_couloirs(array_values(array_filter($par_jour[$j] ?? [], fn(array $e): bool => empty($e['fond'])))) as $e) {
+            foreach (vue_agenda_couloirs($autres) as $e) {
                 $top = round(($e['_debut'] - $hmin * 60) * $px_min);
                 $haut = max(18, round(($e['_fin'] - $e['_debut']) * $px_min) - 2);
-                $largeur = 100 / $e['couloirs'];
-                $style = 'top:' . $top . 'px;height:' . $haut . 'px;left:calc(' . round($largeur * $e['couloir'], 3) . '% + 2px);width:calc('
+                $largeur = (100 - $retrait) / $e['couloirs'];
+                $style = 'top:' . $top . 'px;height:' . $haut . 'px;left:calc(' . round($retrait + $largeur * $e['couloir'], 3) . '% + 2px);width:calc('
                        . round($largeur, 3) . '% - 4px);';
                 $html .= vue_agenda_bloc($e, $style);
             }
